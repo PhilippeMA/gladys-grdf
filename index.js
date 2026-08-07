@@ -19,6 +19,7 @@ import { isConfigured, normalizeConfig } from './src/config.js';
 import { buildDiscoveredDevices, filterPces, findPceByExternalId } from './src/devices/index.js';
 import { synchronizeAll, synchronizePce } from './src/gazpar.js';
 import { GrdfAuthError, GrdfClient } from './src/grdf/client.js';
+import { StatePublisher } from './src/publisher.js';
 import { SyncStore } from './src/store.js';
 import { Throttle } from './src/throttle.js';
 
@@ -42,6 +43,23 @@ const store = new SyncStore();
  * their daily data does not deserve more, and it is their website, not ours.
  */
 const pollThrottle = new Throttle();
+
+/**
+ * Shared states budget: the host API accepts 300 states per minute for the
+ * WHOLE integration, so a single publisher paces every meter (see publisher.js).
+ */
+const publisher = new StatePublisher();
+
+/**
+ * Our own refresh timer.
+ *
+ * Gladys can poll a device for us, but only at one of its predefined
+ * frequencies — in milliseconds, one minute at the slowest. That scheduler is
+ * built for hardware on the LAN; GRDF publishes one measurement per day. So the
+ * devices declare no `poll_frequency` and we drive the refresh ourselves, at the
+ * interval the user configured.
+ */
+let refreshTimer = null;
 
 /**
  * GRDF is a slow, rate-sensitive website and Gladys can call us from several
@@ -83,7 +101,35 @@ async function refreshPceList() {
 
 /** Publish the meters as discovered devices. */
 async function publishDevices() {
-  await gladys.publishDiscoveredDevices(buildDiscoveredDevices(gladys, pceEntries, config));
+  await gladys.publishDiscoveredDevices(buildDiscoveredDevices(gladys, pceEntries));
+}
+
+/** (Re)arm the refresh timer on the currently configured interval. */
+function scheduleRefresh() {
+  stopRefreshTimer();
+  const intervalMs = config.poll_frequency * 1000;
+  refreshTimer = setInterval(() => {
+    enqueue(() =>
+      synchronizeAll(gladys, {
+        client,
+        config,
+        store,
+        pceEntries,
+        throttle: pollThrottle,
+        publisher,
+      }),
+    ).catch((err) => logger.error('Scheduled refresh failed', err));
+  }, intervalMs);
+  logger.info(
+    `Next GRDF refresh in ${config.poll_frequency}s, then every ${config.poll_frequency}s`,
+  );
+}
+
+function stopRefreshTimer() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
 }
 
 /**
@@ -98,6 +144,7 @@ async function publishDevices() {
  */
 async function initialize({ force = false } = {}) {
   if (!isConfigured(config)) {
+    stopRefreshTimer();
     logger.warn('No GRDF credentials configured yet: waiting for the configuration');
     await gladys.setConnectionStatus(false, {
       en: 'Enter your GRDF account email and password in the configuration.',
@@ -105,6 +152,10 @@ async function initialize({ force = false } = {}) {
     });
     return;
   }
+
+  // Arm the timer even if this pass fails: a transient GRDF outage must not
+  // leave the integration without a scheduler until the next restart.
+  scheduleRefresh();
 
   try {
     if (force || pceEntries.length === 0) {
@@ -117,6 +168,7 @@ async function initialize({ force = false } = {}) {
       store,
       pceEntries,
       throttle: force ? undefined : pollThrottle,
+      publisher,
     });
     if (summary.errors.length > 0) {
       throw new Error(summary.errors.map((error) => `${error.pce}: ${error.message}`).join(' | '));
@@ -152,6 +204,9 @@ gladys.onScanRequest(async () => {
 });
 
 // --- Polling: Gladys asks to refresh one meter -------------------------------
+// The devices declare no `poll_frequency`, so this is not the normal refresh
+// path (that one is our own timer): it only fires if Gladys ever asks for a
+// device on demand. Kept, and throttled, because it costs nothing to honor.
 gladys.onPoll(async (device) => {
   const pceEntry = findPceByExternalId(gladys, pceEntries, device.external_id);
   if (!pceEntry) {
@@ -163,7 +218,14 @@ gladys.onPoll(async (device) => {
     return;
   }
   await enqueue(() =>
-    synchronizePce(gladys, { client, config, store, pceEntry, throttle: pollThrottle }),
+    synchronizePce(gladys, {
+      client,
+      config,
+      store,
+      pceEntry,
+      throttle: pollThrottle,
+      publisher,
+    }),
   );
 });
 
@@ -194,7 +256,7 @@ gladys.onAction('refresh_now', async () => {
   const summary = await enqueue(async () => {
     await refreshPceList();
     await publishDevices();
-    return synchronizeAll(gladys, { client, config, store, pceEntries });
+    return synchronizeAll(gladys, { client, config, store, pceEntries, publisher });
   });
   if (summary.errors.length > 0) {
     throw new Error(summary.errors.map((error) => `${error.pce}: ${error.message}`).join(' | '));
@@ -242,6 +304,7 @@ gladys.on('connected', async () => {
 // --- Graceful shutdown -------------------------------------------------------
 gladys.handleShutdown((signal) => {
   logger.info(`Received ${signal} -> graceful shutdown`);
+  stopRefreshTimer();
   client?.logout();
 });
 

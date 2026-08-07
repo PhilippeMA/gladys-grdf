@@ -32,10 +32,9 @@ export function filterPces(pceEntries, rawFilter) {
  * Build the discovery payload: one device per metering point.
  * @param {object} gladys SDK instance
  * @param {Array<{ pce: string, alias?: string }>} pceEntries
- * @param {{ poll_frequency: number }} config
  */
-export function buildDiscoveredDevices(gladys, pceEntries, config) {
-  return pceEntries.map((entry) => buildDevice(gladys, entry, config));
+export function buildDiscoveredDevices(gladys, pceEntries) {
+  return pceEntries.map((entry) => buildDevice(gladys, entry));
 }
 
 /**

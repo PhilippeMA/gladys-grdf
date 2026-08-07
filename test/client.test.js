@@ -75,6 +75,8 @@ function loginRoutes(overrides = {}) {
   return {
     'https://monespace.grdf.fr/accueil': () =>
       htmlResponse('<html>logged in</html>', { cookies: ['auth_token=the-token; Path=/'] }),
+    // The session warm-up the client runs at the end of every login.
+    'https://monespace.grdf.fr/api/e-connexion/users/whoami': () => jsonResponse({ id: 1 }),
     'https://monespace.grdf.fr/api': () => jsonResponse([]),
     'https://monespace.grdf.fr/': () =>
       htmlResponse(LOGIN_PAGE_HTML, { cookies: ['JSESSIONID=abc; Path=/'] }),
@@ -85,6 +87,11 @@ function loginRoutes(overrides = {}) {
       redirectResponse('https://monespace.grdf.fr/accueil'),
     ...overrides,
   };
+}
+
+/** How many full login flows the recorded calls contain. */
+function logins(calls) {
+  return calls.filter((call) => call.url.endsWith('/idp/idx/identify')).length;
 }
 
 function createClient(overrides = {}) {
@@ -123,7 +130,14 @@ test('the login walks the four steps and keeps the session cookie', async (t) =>
   assert.equal(client.isLoggedIn(), true);
   assert.deepEqual(
     calls.map((call) => new URL(call.url).pathname),
-    ['/', '/idp/idx/identify', '/idp/idx/challenge/answer', '/login/token/redirect', '/accueil'],
+    [
+      '/',
+      '/idp/idx/identify',
+      '/idp/idx/challenge/answer',
+      '/login/token/redirect',
+      '/accueil',
+      '/api/e-connexion/users/whoami',
+    ],
   );
 
   // The email is handed over first, the password only afterwards.
@@ -148,7 +162,7 @@ test('logging in twice reuses the session', async (t) => {
   await client.login();
   await client.login();
 
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
 });
 
 test('concurrent logins share a single flow', async (t) => {
@@ -157,7 +171,7 @@ test('concurrent logins share a single flow', async (t) => {
 
   await Promise.all([client.login(), client.login(), client.login()]);
 
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
 });
 
 test('a rejected password is reported with the reason GRDF gave', async (t) => {
@@ -252,7 +266,7 @@ test('an empty period comes back as an empty object, not an array', async (t) =>
   assert.deepEqual(body, {});
 });
 
-test('the HTML app shell served instead of JSON is retried', async (t) => {
+test('the HTML app shell is treated as a refused session: renew, then replay', async (t) => {
   const calls = stubFetch(t, {
     ...loginRoutes(),
     'https://monespace.grdf.fr/api': (_url, _options, index) =>
@@ -262,7 +276,22 @@ test('the HTML app shell served instead of JSON is retried', async (t) => {
   const pces = await createClient().getPceList();
 
   assert.deepEqual(pces, [{ pce: '012' }]);
-  assert.equal(calls.filter((call) => call.url.includes('/api/')).length, 2);
+  // Retrying the same refused session leads nowhere: a fresh login happened.
+  assert.equal(logins(calls), 2);
+});
+
+test('the login page served on an API call says the session was refused', async (t) => {
+  stubFetch(t, {
+    ...loginRoutes(),
+    'https://monespace.grdf.fr/api': () => htmlResponse(LOGIN_PAGE_HTML),
+  });
+
+  await assert.rejects(createClient({ retryCount: 2 }).getPceList(), (err) => {
+    assert.ok(err instanceof GrdfHttpError);
+    assert.match(err.message, /login page/);
+    assert.match(err.message, /session was not accepted/);
+    return true;
+  });
 });
 
 test('an endpoint that never answers JSON gives up with a clear error', async (t) => {
@@ -273,9 +302,40 @@ test('an endpoint that never answers JSON gives up with a clear error', async (t
 
   await assert.rejects(createClient({ retryCount: 2 }).getPceList(), (err) => {
     assert.ok(err instanceof GrdfHttpError);
-    assert.match(err.message, /HTML instead of JSON/);
+    assert.match(err.message, /HTML app shell/);
     return true;
   });
+});
+
+test('a redirect on an API call is diagnosed, not followed into an HTML page', async (t) => {
+  const calls = stubFetch(t, {
+    ...loginRoutes(),
+    'https://monespace.grdf.fr/api': (_url, _options, index) =>
+      index === 0
+        ? redirectResponse('https://connexion.grdf.fr/oauth2/authorize')
+        : jsonResponse([{ pce: '012' }]),
+  });
+
+  const pces = await createClient().getPceList();
+
+  assert.deepEqual(pces, [{ pce: '012' }]);
+  assert.equal(logins(calls), 2);
+  // The redirect target was never fetched: it is the diagnosis, not a step.
+  assert.equal(calls.filter((call) => call.url.includes('/oauth2/authorize')).length, 0);
+});
+
+test('a session refused for good stops after a bounded number of logins', async (t) => {
+  const calls = stubFetch(t, {
+    ...loginRoutes(),
+    'https://monespace.grdf.fr/api': () => redirectResponse('https://connexion.grdf.fr/login'),
+  });
+
+  await assert.rejects(createClient({ retryCount: 4 }).getPceList(), (err) => {
+    assert.match(err.message, /redirected/);
+    return true;
+  });
+  // The initial login plus MAX_RELOGIN_PER_REQUEST renewals, then plain waits.
+  assert.equal(logins(calls), 3);
 });
 
 test('an expired session triggers a new login and the call is replayed', async (t) => {
@@ -292,7 +352,7 @@ test('an expired session triggers a new login and the call is replayed', async (
 
   assert.deepEqual(pces, [{ pce: '012' }]);
   // Two full login flows: the initial one and the one after the 401.
-  assert.equal(calls.filter((call) => call.url.endsWith('/idp/idx/identify')).length, 2);
+  assert.equal(logins(calls), 2);
 });
 
 test('a server error is surfaced with its status code', async (t) => {
