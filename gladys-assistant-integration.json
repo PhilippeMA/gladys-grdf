@@ -10,9 +10,7 @@
   "docker_image": "ghcr.io/philippema/gladys-grdf:1.1.0",
   "gladys_version": ">=4.62.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-grdf/main/cover.png",
-  "transports": [
-    "cloud"
-  ],
+  "transports": ["cloud"],
   "config_schema": [
     {
       "key": "intro",
