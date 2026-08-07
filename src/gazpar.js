@@ -15,8 +15,9 @@
 // -----------------------------------------------------------------------------
 
 import { createLogger } from '@gladysassistant/integration-sdk';
+import { findCreatedDevice, hasAnyValue } from './created.js';
 import { addDays, today as todayOf } from './dates.js';
-import { buildStates } from './devices/gasMeter.js';
+import { buildStates, deviceExternalId } from './devices/gasMeter.js';
 import { normalizeReadings, withTemperatures } from './grdf/readings.js';
 import { StatePublisher } from './publisher.js';
 
@@ -67,11 +68,38 @@ export function selectNewReadings(readings, lastDay) {
  */
 export async function synchronizePce(
   gladys,
-  { client, config, store, pceEntry, throttle, publisher, now },
+  { client, config, store, pceEntry, throttle, publisher, createdDevices, now },
 ) {
   const pce = String(pceEntry.pce);
   const today = todayOf(now);
-  const lastDay = store.get(pce);
+  const externalId = deviceExternalId(gladys, pce);
+
+  // Nothing to publish to until the user adds the meter from the Discovery
+  // screen: the core drops states aimed at a device that does not exist, and
+  // it does not tell us. Fetching GRDF for nobody would only burn the cursor.
+  const devices = createdDevices ?? (await gladys.getDevices());
+  const device = findCreatedDevice(devices, externalId);
+  if (!device) {
+    logger.info(
+      `PCE ${pce}: not added to Gladys yet, skipping (add it from the Discovery tab to start collecting)`,
+    );
+    return { pce, days: 0, states: 0, lastDay: store.get(pce), skipped: 'not-created' };
+  }
+
+  let lastDay = store.get(pce);
+
+  // A cursor claiming days were published for a device that has never held a
+  // single value can only be wrong: those states were sent before the user
+  // created the device and went nowhere. Rewind and import them again.
+  if (lastDay && !hasAnyValue(device)) {
+    logger.warn(
+      `PCE ${pce}: Gladys holds no value for this meter although the cursor says ${lastDay}; ` +
+        'the readings were published before the device existed. Importing the history again.',
+    );
+    store.reset(pce);
+    await store.save();
+    lastDay = undefined;
+  }
 
   if (throttle && !throttle.allow(pce, now?.getTime())) {
     logger.debug(`PCE ${pce}: skipped, GRDF was queried too recently`);
@@ -112,7 +140,10 @@ export async function synchronizePce(
       });
       readings = withTemperatures(readings, temperatures);
     } catch (err) {
-      logger.warn(`PCE ${pce}: could not fetch the temperatures (${err.message})`);
+      // A 404 means GRDF simply has no weather series for this meter — normal
+      // for many PCE, and not worth a warning on every single pass.
+      const level = err.statusCode === 404 ? 'debug' : 'warn';
+      logger[level](`PCE ${pce}: no temperature available (${err.message})`);
     }
   }
 
@@ -134,16 +165,18 @@ export async function synchronizePce(
  * does not prevent the others from being synchronized: the error is collected
  * and reported to the caller.
  *
- * @returns {Promise<{ days: number, states: number, errors: Array<{ pce: string, message: string }> }>}
+ * @returns {Promise<{ days: number, states: number, waiting: number, errors: Array<{ pce: string, message: string }> }>}
  */
 export async function synchronizeAll(
   gladys,
   { client, config, store, pceEntries, throttle, publisher, now },
 ) {
-  const summary = { days: 0, states: 0, errors: [] };
+  const summary = { days: 0, states: 0, waiting: 0, errors: [] };
   // One budget for the whole pass: two meters importing their history together
   // must not each believe they own the full states-per-minute allowance.
   const sharedPublisher = publisher ?? new StatePublisher();
+  // Asked once for the whole pass, not once per meter.
+  const createdDevices = await gladys.getDevices();
 
   for (const pceEntry of pceEntries) {
     try {
@@ -154,10 +187,14 @@ export async function synchronizeAll(
         pceEntry,
         throttle,
         publisher: sharedPublisher,
+        createdDevices,
         now,
       });
       summary.days += result.days;
       summary.states += result.states;
+      if (result.skipped === 'not-created') {
+        summary.waiting += 1;
+      }
     } catch (err) {
       logger.error(`PCE ${pceEntry.pce}: synchronization failed`, err);
       summary.errors.push({ pce: String(pceEntry.pce), message: err.message });

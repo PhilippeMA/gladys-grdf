@@ -69,6 +69,15 @@ export class SyncStore {
     return this.lastDayByPce[pce];
   }
 
+  /**
+   * Forget the cursor of a PCE, so the next pass imports the history again.
+   * Used when Gladys turns out to hold nothing for a meter we believed was
+   * up to date.
+   */
+  reset(pce) {
+    delete this.lastDayByPce[pce];
+  }
+
   /** Move the cursor forward (never backward: a re-import must not rewind it). */
   set(pce, day) {
     const current = this.lastDayByPce[pce];

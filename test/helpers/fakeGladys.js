@@ -10,7 +10,7 @@
 // running Gladys server or a real WebSocket.
 // -----------------------------------------------------------------------------
 
-export function createFakeGladys() {
+export function createFakeGladys({ devices = null } = {}) {
   const published = [];
   const batches = [];
   const discoveredDevices = [];
@@ -45,9 +45,23 @@ export function createFakeGladys() {
       }
     },
 
-    async publishDiscoveredDevices(devices) {
-      discoveredDevices.push(devices);
-      return { success: true, count: devices.length };
+    async publishDiscoveredDevices(discovered) {
+      discoveredDevices.push(discovered);
+      return { success: true, count: discovered.length };
+    },
+
+    // Devices the user actually created. `null` (the default) means "every
+    // device the integration published", which keeps the tests that do not
+    // care about creation readable; pass an array to control it.
+    async getDevices() {
+      if (devices !== null) {
+        return devices;
+      }
+      return discoveredDevices.flat().map((device) => ({
+        ...device,
+        // A created device that already holds values, so the cursor is trusted.
+        features: (device.features ?? []).map((feature) => ({ ...feature, last_value: 1 })),
+      }));
     },
 
     async setConnectionStatus(connected, message) {

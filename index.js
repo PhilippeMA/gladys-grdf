@@ -229,6 +229,35 @@ gladys.onPoll(async (device) => {
   );
 });
 
+// --- The user just added a meter to their home -------------------------------
+// Until this happens, states published for that meter are dropped by the core:
+// the device does not exist yet. So this is the moment to collect, and it must
+// not be delayed by the rate floor — the user is watching the screen.
+gladys.onDeviceCreated(async (device) => {
+  const pceEntry = findPceByExternalId(gladys, pceEntries, device.external_id);
+  if (!pceEntry || !client) {
+    return;
+  }
+  logger.info(`Device created for PCE ${pceEntry.pce} -> importing its readings now`);
+  await enqueue(() => synchronizePce(gladys, { client, config, store, pceEntry, publisher })).catch(
+    (err) => logger.error('Import after device creation failed', err),
+  );
+});
+
+// --- The user removed a meter ------------------------------------------------
+// Forget its cursor: if they add it back, they expect their history to be
+// imported again, not to wait for tomorrow's reading.
+gladys.onDeviceDeleted(async (device) => {
+  const pceEntry = findPceByExternalId(gladys, pceEntries, device.external_id);
+  if (!pceEntry) {
+    return;
+  }
+  logger.info(`Device deleted for PCE ${pceEntry.pce} -> forgetting its synchronization cursor`);
+  store.reset(String(pceEntry.pce));
+  pollThrottle.reset(String(pceEntry.pce));
+  await store.save();
+});
+
 // --- Manifest actions: buttons in the Configuration screen -------------------
 gladys.onAction('test_connection', async () => {
   if (!isConfigured(config)) {
@@ -260,6 +289,15 @@ gladys.onAction('refresh_now', async () => {
   });
   if (summary.errors.length > 0) {
     throw new Error(summary.errors.map((error) => `${error.pce}: ${error.message}`).join(' | '));
+  }
+  // The most common reason for "nothing happened": the meters are offered in
+  // the Discovery tab but have not been added to the home yet, and Gladys
+  // discards states aimed at a device that does not exist.
+  if (summary.waiting > 0 && summary.days === 0) {
+    return {
+      en: `${summary.waiting} meter(s) are not added to your home yet: add them from the Discovery tab, and their history will be imported right away.`,
+      fr: `${summary.waiting} compteur(s) ne sont pas encore ajoutés à votre maison : ajoutez-les depuis l’onglet Découverte, leur historique sera importé aussitôt.`,
+    };
   }
   if (summary.days === 0) {
     return {

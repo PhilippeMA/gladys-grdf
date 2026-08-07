@@ -10,6 +10,7 @@ import {
   synchronizeAll,
   synchronizePce,
 } from '../src/gazpar.js';
+import { deviceExternalId } from '../src/devices/gasMeter.js';
 import { SyncStore } from '../src/store.js';
 import { Throttle } from '../src/throttle.js';
 import { createFakeGladys } from './helpers/fakeGladys.js';
@@ -36,6 +37,25 @@ function createFakeClient({ releves = [], temperatures = {}, failWith } = {}) {
       return temperatures;
     },
   };
+}
+
+/**
+ * A fake Gladys where the given meters HAVE been added to the home by the user.
+ * `hasValues: false` reproduces a device that was created but never received
+ * anything — the situation a lying cursor leaves behind.
+ */
+function createGladysWithDevices(pces = [PCE], { hasValues = true } = {}) {
+  const ids = createFakeGladys();
+  const devices = pces.map((pce) => ({
+    external_id: deviceExternalId(ids, pce),
+    features: [
+      {
+        external_id: `${deviceExternalId(ids, pce)}:daily-energy`,
+        last_value: hasValues ? 42 : null,
+      },
+    ],
+  }));
+  return createFakeGladys({ devices });
 }
 
 async function createStore() {
@@ -91,7 +111,7 @@ test('selectNewReadings drops the days already published', () => {
 });
 
 test('a first synchronization imports the history and moves the cursor', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const client = createFakeClient({
     releves: [releve('2026-08-04'), releve('2026-08-05'), releve('2026-08-06')],
@@ -116,7 +136,7 @@ test('a first synchronization imports the history and moves the cursor', async (
 });
 
 test('the cursor survives a restart: the second pass publishes nothing new', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const releves = [releve('2026-08-05'), releve('2026-08-06')];
 
@@ -147,7 +167,7 @@ test('the cursor survives a restart: the second pass publishes nothing new', asy
 });
 
 test('nothing is fetched when the cursor is already past today', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   store.set(PCE, '2026-08-07');
   const client = createFakeClient({ releves: [releve('2026-08-07')] });
@@ -165,7 +185,7 @@ test('nothing is fetched when the cursor is already past today', async () => {
 });
 
 test('the scheduled path never queries GRDF twice in a row for the same meter', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const client = createFakeClient({ releves: [releve('2026-08-05')] });
   const throttle = new Throttle();
@@ -179,7 +199,7 @@ test('the scheduled path never queries GRDF twice in a row for the same meter', 
 });
 
 test('an explicit refresh (no throttle) always goes through', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const client = createFakeClient({ releves: [releve('2026-08-05')] });
   const throttled = { client, config: CONFIG, store, pceEntry: { pce: PCE }, now: NOW };
@@ -191,7 +211,7 @@ test('an explicit refresh (no throttle) always goes through', async () => {
 });
 
 test('the missing temperatures are completed from the meteo endpoint', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const client = createFakeClient({
     releves: [releve('2026-08-05', { temperature: null })],
@@ -214,7 +234,7 @@ test('the missing temperatures are completed from the meteo endpoint', async () 
 });
 
 test('the meteo endpoint is not called when every reading has its temperature', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const client = createFakeClient({ releves: [releve('2026-08-05')] });
 
@@ -230,7 +250,7 @@ test('the meteo endpoint is not called when every reading has its temperature', 
 });
 
 test('a failing temperature lookup does not lose the consumption', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices();
   const store = await createStore();
   const client = createFakeClient({ releves: [releve('2026-08-05', { temperature: null })] });
   client.getTemperatures = async () => {
@@ -251,7 +271,7 @@ test('a failing temperature lookup does not lose the consumption', async () => {
 });
 
 test('synchronizeAll keeps going when one meter fails, and reports it', async () => {
-  const gladys = createFakeGladys();
+  const gladys = createGladysWithDevices([PCE, '98765432109876']);
   const store = await createStore();
   const failing = createFakeClient({ failWith: new Error('GRDF answered HTTP 500') });
   const working = createFakeClient({ releves: [releve('2026-08-05')] });
@@ -280,4 +300,85 @@ test('synchronizeAll keeps going when one meter fails, and reports it', async ()
   assert.equal(summary.days, 1);
   assert.equal(store.get('98765432109876'), '2026-08-05');
   assert.equal(store.get(PCE), undefined);
+});
+
+test('nothing is collected for a meter the user has not added to Gladys yet', async () => {
+  // The core drops states aimed at a device that does not exist, silently.
+  // Fetching GRDF for nobody would burn the cursor on data nobody receives.
+  const gladys = createFakeGladys({ devices: [] });
+  const store = await createStore();
+  const client = createFakeClient({ releves: [releve('2026-08-05')] });
+
+  const result = await synchronizePce(gladys, {
+    client,
+    config: CONFIG,
+    store,
+    pceEntry: { pce: PCE },
+    now: NOW,
+  });
+
+  assert.equal(result.days, 0);
+  assert.equal(result.skipped, 'not-created');
+  assert.deepEqual(client.calls.consumption, [], 'GRDF must not be queried for nobody');
+  assert.equal(store.get(PCE), undefined, 'the cursor must not move');
+});
+
+test('a cursor is rewound when Gladys turns out to hold nothing for the meter', async () => {
+  // Exactly what a first run before the device existed leaves behind: the
+  // cursor says the week was published, the device has never held a value.
+  const gladys = createGladysWithDevices([PCE], { hasValues: false });
+  const store = await createStore();
+  store.set(PCE, '2026-08-05');
+  const client = createFakeClient({
+    releves: [releve('2026-08-04'), releve('2026-08-05'), releve('2026-08-06')],
+  });
+
+  const result = await synchronizePce(gladys, {
+    client,
+    config: CONFIG,
+    store,
+    pceEntry: { pce: PCE },
+    now: NOW,
+  });
+
+  // The whole history window was asked for again, not just the days after the
+  // stale cursor.
+  assert.equal(client.calls.consumption[0].startDate, '2026-07-31');
+  assert.equal(result.days, 3);
+  assert.equal(store.get(PCE), '2026-08-06');
+});
+
+test('a cursor is kept when the meter already holds values', async () => {
+  const gladys = createGladysWithDevices([PCE], { hasValues: true });
+  const store = await createStore();
+  store.set(PCE, '2026-08-05');
+  const client = createFakeClient({ releves: [releve('2026-08-06')] });
+
+  await synchronizePce(gladys, {
+    client,
+    config: CONFIG,
+    store,
+    pceEntry: { pce: PCE },
+    now: NOW,
+  });
+
+  assert.equal(client.calls.consumption[0].startDate, '2026-08-06');
+});
+
+test('synchronizeAll counts the meters still waiting to be added', async () => {
+  const gladys = createFakeGladys({ devices: [] });
+  const store = await createStore();
+  const client = createFakeClient({ releves: [releve('2026-08-05')] });
+
+  const summary = await synchronizeAll(gladys, {
+    client,
+    config: CONFIG,
+    store,
+    pceEntries: [{ pce: PCE }, { pce: '98765432109876' }],
+    now: NOW,
+  });
+
+  assert.equal(summary.waiting, 2);
+  assert.equal(summary.days, 0);
+  assert.deepEqual(summary.errors, []);
 });

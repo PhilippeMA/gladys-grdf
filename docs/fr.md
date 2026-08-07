@@ -42,8 +42,10 @@ quotidiens que le site vous affiche.
 5. Cliquez sur **Tester la connexion GRDF** : elle se connecte et liste les
    points de comptage trouvés. C'est le moyen le plus rapide de vérifier vos
    identifiants.
-6. Enregistrez. Les compteurs apparaissent dans l'onglet **Découverte**, prêts à
-   être ajoutés à votre maison.
+6. Enregistrez, puis ouvrez l'onglet **Découverte** et **ajoutez votre compteur
+   à votre maison**. C'est cette étape qui déclenche la collecte : tant qu'un
+   compteur n'est pas ajouté, ce n'est qu'une proposition, et Gladys n'a nulle
+   part où ranger ses mesures. L'historique est importé dès que vous l'ajoutez.
 
 ## Les appareils obtenus
 
@@ -79,6 +81,12 @@ ne voulez pas attendre.
 [monespace.grdf.fr](https://monespace.grdf.fr) avec les mêmes identifiants dans
 une fenêtre de navigation privée. Si GRDF vous y demande un code ou un captcha,
 l'intégration ne passera pas non plus.
+
+**Les capteurs existent mais restent vides.** Vérifiez que le compteur est bien
+**ajouté à votre maison**, et pas seulement listé dans l'onglet **Découverte** :
+Gladys ne conserve les mesures que des appareils que vous avez ajoutés. Une fois
+ajouté, l'historique est importé en quelques secondes — ou utilisez
+**Rafraîchir les données maintenant**.
 
 **« GRDF served its HTML app shell » ou « the session was not accepted ».** GRDF
 a répondu par une page web au lieu de données. Son site fait cela quand il

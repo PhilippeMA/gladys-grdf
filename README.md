@@ -104,6 +104,24 @@ Three constraints shape the pacing, all of them found in the Gladys core:
   scheduled path whatever interval ends up applied; the explicit "Refresh now"
   button bypasses it.
 
+### Publishing only to devices that exist
+
+Publishing a discovered device does not create it — the user does, from the
+Discovery screen. A state aimed at a device that was never created is dropped
+by the core, which logs `DeviceFeature not found (or not added to Gladys)` on
+its own side and answers success to the integration.
+
+That silence is a trap for an integration that imports history: it would
+"publish" a week of readings seconds after discovery, move its cursor past
+them, and never send those days again. So every pass asks `getDevices()` first
+and skips the meters the user has not added — without touching their cursor.
+`onDeviceCreated` then imports the history the moment a meter is added, and
+`onDeviceDeleted` forgets its cursor so re-adding starts fresh.
+
+As a safety net, a cursor claiming days were published for a device that has
+never held a single value is treated as wrong: it is rewound and the history
+re-imported.
+
 ### Avoiding duplicates
 
 GRDF answers with a whole period at once, so the integration keeps a cursor —

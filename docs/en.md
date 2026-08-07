@@ -38,8 +38,10 @@ readings the website shows you.
    integration feeds them in gently — about one minute per two months imported.
 5. Click **Test the GRDF connection**: it signs in and lists the metering points
    it found. This is the quickest way to check your credentials.
-6. Save. The meters appear in the **Discovery** tab, ready to be added to your
-   home.
+6. Save, then open the **Discovery** tab and **add your meter to your home**.
+   This step is what starts the collection: until a meter is added, it is only
+   an offer, and Gladys has nowhere to store its measurements. The history is
+   imported the moment you add it.
 
 ## The devices you get
 
@@ -73,6 +75,11 @@ action forces a fetch immediately if you do not want to wait.
 [monespace.grdf.fr](https://monespace.grdf.fr) with the same credentials in a
 private browser window. If GRDF asks you for a code or a captcha there, the
 integration cannot get through either.
+
+**The sensors exist but stay empty.** Check that the meter is really added to
+your home, and not merely listed in the **Discovery** tab: Gladys only stores
+measurements for devices you added. Once added, the history is imported within
+seconds — or use **Refresh the data now**.
 
 **"GRDF served its HTML app shell" or "the session was not accepted".** GRDF
 answered with a web page instead of data. Their site does that when it does not
