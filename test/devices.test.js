@@ -10,15 +10,21 @@ import {
 import { buildDiscoveredDevices, filterPces, findPceByExternalId } from '../src/devices/index.js';
 import { createFakeGladys } from './helpers/fakeGladys.js';
 
-const CONFIG = { poll_frequency: 21600 };
 const PCE = '01234567890123';
+
+test('the device declares no poll_frequency: the core only accepts LAN-speed values', () => {
+  // DEVICE_POLL_FREQUENCIES, in milliseconds, tops out at one minute — the
+  // integration schedules its own refresh instead. Publishing a value outside
+  // that list is rejected with "invalid poll frequency".
+  const device = buildDevice(createFakeGladys(), { pce: PCE });
+  assert.equal(device.poll_frequency, undefined);
+});
 
 test('a meter becomes one device carrying four read-only sensors', () => {
   const gladys = createFakeGladys();
-  const device = buildDevice(gladys, { pce: PCE, alias: 'Maison' }, CONFIG);
+  const device = buildDevice(gladys, { pce: PCE, alias: 'Maison' });
 
   assert.equal(device.external_id, `${DEVICE_TYPE}:${PCE}`);
-  assert.equal(device.poll_frequency, 21600);
   assert.deepEqual(
     device.features.map((feature) => feature.external_id),
     [
@@ -45,7 +51,7 @@ test('the device name uses the alias set in Mon Espace, or the PCE number', () =
 
 test('one device is discovered per metering point', () => {
   const gladys = createFakeGladys();
-  const devices = buildDiscoveredDevices(gladys, [{ pce: PCE }, { pce: '98765432109876' }], CONFIG);
+  const devices = buildDiscoveredDevices(gladys, [{ pce: PCE }, { pce: '98765432109876' }]);
   assert.deepEqual(
     devices.map((device) => device.external_id),
     [`${DEVICE_TYPE}:${PCE}`, `${DEVICE_TYPE}:98765432109876`],

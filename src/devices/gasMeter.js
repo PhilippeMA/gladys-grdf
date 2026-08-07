@@ -59,18 +59,22 @@ export function buildDeviceName({ pce, alias }) {
 
 /**
  * Discovery payload of one meter.
+ *
+ * No `poll_frequency`: the core accepts only a closed list of values, in
+ * MILLISECONDS, the slowest being one minute (DEVICE_POLL_FREQUENCIES) — meant
+ * for a lamp on the LAN, not for a website publishing one measurement a day.
+ * Declaring one would either be rejected or have Gladys wake us up every
+ * minute, so this integration schedules its own refresh instead (see
+ * index.js) at the interval the user configured, in hours.
+ *
  * @param {object} gladys SDK instance
  * @param {{ pce: string, alias?: string }} pceEntry
- * @param {{ poll_frequency: number }} config
  */
-export function buildDevice(gladys, pceEntry, config) {
+export function buildDevice(gladys, pceEntry) {
   const ids = externalIdsFor(gladys, pceEntry.pce);
   return {
     name: buildDeviceName(pceEntry),
     external_id: ids.device,
-    // Gladys calls onPoll at this interval (seconds). GRDF refreshes once a
-    // day: polling more often only re-reads the same values.
-    poll_frequency: config.poll_frequency,
     features: [
       {
         name: 'Consommation quotidienne',

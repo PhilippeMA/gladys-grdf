@@ -5,9 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   MAX_HISTORY_DAYS,
-  chunk,
   computeStartDay,
-  publishStates,
   selectNewReadings,
   synchronizeAll,
   synchronizePce,
@@ -90,27 +88,6 @@ test('selectNewReadings keeps everything when nothing was ever published', () =>
 test('selectNewReadings drops the days already published', () => {
   const readings = [{ day: '2026-08-01' }, { day: '2026-08-02' }, { day: '2026-08-03' }];
   assert.deepEqual(selectNewReadings(readings, '2026-08-02'), [{ day: '2026-08-03' }]);
-});
-
-test('chunk splits a list without losing anything', () => {
-  assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
-  assert.deepEqual(chunk([], 2), []);
-});
-
-test('publishStates respects the 100-states-per-request limit', async () => {
-  const gladys = createFakeGladys();
-  const states = Array.from({ length: 250 }, (_unused, index) => ({
-    device_feature_external_id: 'feature',
-    state: index,
-  }));
-
-  const count = await publishStates(gladys, states);
-
-  assert.equal(count, 250);
-  assert.deepEqual(
-    gladys.batches.map((batch) => batch.length),
-    [100, 100, 50],
-  );
 });
 
 test('a first synchronization imports the history and moves the cursor', async () => {

@@ -33,7 +33,9 @@ readings the website shows you.
    time the integration synchronizes. GRDF keeps about three years, so you can
    import several months at once if you want charts that already have a past.
    This only applies to the first synchronization; afterwards the integration
-   only fetches what is new.
+   only fetches what is new. Importing a long history takes a few minutes:
+   Gladys accepts a limited number of measurements per minute, so the
+   integration feeds them in gently — about one minute per two months imported.
 5. Click **Test the GRDF connection**: it signs in and lists the metering points
    it found. This is the quickest way to check your credentials.
 6. Save. The meters appear in the **Discovery** tab, ready to be added to your
@@ -61,9 +63,9 @@ following the measurement. There is nothing live here: the consumption of
 Monday typically lands on Tuesday or Wednesday. This is a limit of the Gazpar
 network itself (the meter transmits once a day), not of the integration.
 
-The integration queries GRDF every six hours by default, which is far more than
-enough for a daily value. The **Refresh the data now** action forces a fetch
-immediately if you do not want to wait.
+The integration queries GRDF on its own schedule — every six hours by default,
+which is far more than enough for a daily value. The **Refresh the data now**
+action forces a fetch immediately if you do not want to wait.
 
 ## Troubleshooting
 

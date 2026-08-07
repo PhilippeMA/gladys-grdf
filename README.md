@@ -65,6 +65,8 @@ beyond the Gladys SDK.
 │  │  ├─ gasMeter.js                 #   one PCE -> one device + its features
 │  │  └─ index.js                    #   registry (devices are dynamic)
 │  ├─ gazpar.js                      # synchronization: readings -> states
+│  ├─ publisher.js                   # paced publishing (host API rate limit)
+│  ├─ throttle.js                    # rate floor of the scheduled path
 │  ├─ store.js                       # sync cursor persisted in /data
 │  ├─ dates.js                       # gas-day helpers
 │  └─ config.js                      # config defaults + normalization
@@ -73,6 +75,24 @@ beyond the Gladys SDK.
 ├─ gladys-assistant-integration.json # manifest (name, config schema, image…)
 └─ Dockerfile                        # Node 24 Alpine, read-only rootfs ready
 ```
+
+### Scheduling and rate limits
+
+Three constraints shape the pacing, all of them found in the Gladys core:
+
+- **Gladys polling is not usable here.** `poll_frequency` accepts only a closed
+  list of values (`DEVICE_POLL_FREQUENCIES`), in milliseconds, one minute at the
+  slowest — a scheduler for hardware on the LAN. The devices declare none and
+  the integration runs its own timer at the configured interval (6 h by
+  default). `onPoll` is still handled, in case the core ever asks on demand.
+- **300 states per minute, per integration.** Over that the host API answers
+  429 and the batch is lost — the SDK does not retry. `StatePublisher` keeps a
+  budget of 250 per minute (the core's window and ours are never aligned, so the
+  margin absorbs the overlap) and waits for the next window instead of losing
+  data. A full three-year import is therefore paced over ~18 minutes.
+- **GRDF is somebody else's website.** A 30-minute floor per meter guards the
+  scheduled path whatever interval ends up applied; the explicit "Refresh now"
+  button bypasses it.
 
 ### Avoiding duplicates
 

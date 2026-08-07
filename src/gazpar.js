@@ -18,11 +18,9 @@ import { createLogger } from '@gladysassistant/integration-sdk';
 import { addDays, today as todayOf } from './dates.js';
 import { buildStates } from './devices/gasMeter.js';
 import { normalizeReadings, withTemperatures } from './grdf/readings.js';
+import { StatePublisher } from './publisher.js';
 
 const logger = createLogger({ name: 'gazpar' });
-
-/** `publishStates` accepts at most 100 states per request. */
-export const MAX_STATES_PER_REQUEST = 100;
 
 /** Hard limit of the import window: GRDF keeps about three years of history. */
 export const MAX_HISTORY_DAYS = 1095;
@@ -51,26 +49,6 @@ export function selectNewReadings(readings, lastDay) {
   return lastDay ? readings.filter((reading) => reading.day > lastDay) : readings;
 }
 
-/** Split a list into chunks of at most `size` entries. */
-export function chunk(items, size) {
-  const chunks = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-  return chunks;
-}
-
-/**
- * Publish states, respecting the batch limit of the host API.
- * @returns {Promise<number>} number of states published
- */
-export async function publishStates(gladys, states) {
-  for (const batch of chunk(states, MAX_STATES_PER_REQUEST)) {
-    await gladys.publishStates(batch);
-  }
-  return states.length;
-}
-
 /**
  * Synchronize ONE metering point.
  *
@@ -82,10 +60,15 @@ export async function publishStates(gladys, states) {
  * @param {{ pce: string }} options.pceEntry
  * @param {import('./throttle.js').Throttle} [options.throttle] rate floor of the
  *   scheduled path; omitted when the user explicitly asked for a refresh
+ * @param {import('./publisher.js').StatePublisher} [options.publisher] shared
+ *   states budget; a private one is used when it is omitted
  * @param {Date} [options.now] injectable clock, for the tests
  * @returns {Promise<{ pce: string, days: number, states: number, lastDay?: string }>}
  */
-export async function synchronizePce(gladys, { client, config, store, pceEntry, throttle, now }) {
+export async function synchronizePce(
+  gladys,
+  { client, config, store, pceEntry, throttle, publisher, now },
+) {
   const pce = String(pceEntry.pce);
   const today = todayOf(now);
   const lastDay = store.get(pce);
@@ -134,7 +117,9 @@ export async function synchronizePce(gladys, { client, config, store, pceEntry, 
   }
 
   const states = buildStates(gladys, pce, readings);
-  await publishStates(gladys, states);
+  // Publishing is paced: a long history import would otherwise trip the
+  // 300-states-per-minute limit of the host API and lose whole batches.
+  await (publisher ?? new StatePublisher()).publish(gladys, states);
 
   const newLastDay = readings[readings.length - 1].day;
   store.set(pce, newLastDay);
@@ -151,8 +136,14 @@ export async function synchronizePce(gladys, { client, config, store, pceEntry, 
  *
  * @returns {Promise<{ days: number, states: number, errors: Array<{ pce: string, message: string }> }>}
  */
-export async function synchronizeAll(gladys, { client, config, store, pceEntries, throttle, now }) {
+export async function synchronizeAll(
+  gladys,
+  { client, config, store, pceEntries, throttle, publisher, now },
+) {
   const summary = { days: 0, states: 0, errors: [] };
+  // One budget for the whole pass: two meters importing their history together
+  // must not each believe they own the full states-per-minute allowance.
+  const sharedPublisher = publisher ?? new StatePublisher();
 
   for (const pceEntry of pceEntries) {
     try {
@@ -162,6 +153,7 @@ export async function synchronizeAll(gladys, { client, config, store, pceEntries
         store,
         pceEntry,
         throttle,
+        publisher: sharedPublisher,
         now,
       });
       summary.days += result.days;
