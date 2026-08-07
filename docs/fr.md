@@ -80,6 +80,15 @@ ne voulez pas attendre.
 une fenêtre de navigation privée. Si GRDF vous y demande un code ou un captcha,
 l'intégration ne passera pas non plus.
 
+**« GRDF served its HTML app shell » ou « the session was not accepted ».** GRDF
+a répondu par une page web au lieu de données. Son site fait cela quand il
+n'accepte pas la session, mais aussi quand il traverse simplement un mauvais
+moment — il ne dit jamais lequel des deux. L'intégration se reconnecte et
+réessaie seule plusieurs fois ; si cela échoue encore, patientez quelques
+minutes puis utilisez **Rafraîchir les données maintenant**. Si cela persiste,
+vérifiez que monespace.grdf.fr fonctionne dans votre navigateur : GRDF freine
+parfois un compte qui s'est connecté de nombreuses fois d'affilée.
+
 **Aucune donnée nouvelle depuis plusieurs jours.** Vérifiez sur le site GRDF que
 les relevés sont bien publiés pour votre compteur : un Gazpar qui a perdu sa
 liaison radio n'alimente plus GRDF, et l'intégration ne peut montrer que ce que

@@ -47,6 +47,16 @@ This is scraping: **GRDF can break it at any time**, and an account protected by
 a one-time code or a captcha cannot be used. Every failure is surfaced with an
 explicit message in the Configuration screen rather than swallowed.
 
+GRDF never says "your session is not valid". Being a single-page app behind a
+gateway, an unauthenticated request comes back as a redirect to the login page,
+or as the app's own HTML shell with a 200 — never as a clean 401. The client
+therefore treats all three as the same thing: renew the session and replay
+(bounded to two renewals per request, then plain backoff). Redirects are not
+followed on API calls, precisely so that "go and authenticate" does not decay
+into an opaque HTML page, and the HTML body is inspected to log _which_ page
+GRDF served. A `whoami` call after each login gives the gateway the same
+bootstrap the web app performs.
+
 Cookies are handled by a small in-repo jar ([`src/grdf/cookieJar.js`](./src/grdf/cookieJar.js))
 because Node's `fetch` ignores them — the integration has no runtime dependency
 beyond the Gladys SDK.

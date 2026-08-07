@@ -47,6 +47,12 @@ const OKTA_HEADERS = {
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 10;
 
+/**
+ * How many times a single request may renew the session before we accept that
+ * a fresh login is not the answer and simply wait instead.
+ */
+const MAX_RELOGIN_PER_REQUEST = 2;
+
 /** Consumption datasets exposed by GRDF. */
 export const CONSUMPTION_TYPES = {
   // Daily readings, the detailed ones shown in the web app.
@@ -115,11 +121,65 @@ export function extractOktaErrorMessage(body) {
   return undefined;
 }
 
+/**
+ * Does this response mean "GRDF did not authenticate the request"? Returns a
+ * description of the rejection, or undefined when the response is usable.
+ *
+ * The three shapes, none of which GRDF labels as an authentication problem:
+ *   - 401/403, the honest one, which GRDF rarely uses;
+ *   - a redirect, which points at the login page;
+ *   - a 200 carrying HTML: the single-page app shell, served by the gateway
+ *     for anything it will not answer with data.
+ *
+ * The HTML body is inspected to tell the two HTML cases apart — a login page
+ * means the session is gone, the plain app shell usually means GRDF is having
+ * a bad minute. Both are retried, but the log has to say which one it saw.
+ *
+ * @param {Response} response
+ * @param {string} where endpoint and query, for the message
+ * @returns {Promise<{ message: string, kind: string }|undefined>}
+ */
+export async function describeSessionRejection(response, where) {
+  if (response.status === 401 || response.status === 403) {
+    return {
+      kind: 'unauthorized',
+      message: `GRDF refused the session on ${where} (HTTP ${response.status})`,
+    };
+  }
+
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get('location') ?? 'an unknown location';
+    return {
+      kind: 'redirect',
+      message: `GRDF redirected ${where} to ${location} instead of answering: the session was not accepted`,
+    };
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('text/html')) {
+    return undefined;
+  }
+
+  let body = '';
+  try {
+    body = await response.text();
+  } catch {
+    // Unreadable body: the content type is enough to know it is not JSON.
+  }
+  const looksLikeLogin = /stateToken|connexion\.grdf\.fr|type="password"/.test(body);
+  return {
+    kind: looksLikeLogin ? 'login-page' : 'app-shell',
+    message: looksLikeLogin
+      ? `GRDF served the login page on ${where}: the session was not accepted`
+      : `GRDF served its HTML app shell on ${where} instead of JSON (${body.length} bytes)`,
+  };
+}
+
 export class GrdfClient {
   /**
    * @param {{ email: string, password: string, retryCount?: number, retryDelayMs?: number }} options
    */
-  constructor({ email, password, retryCount = 3, retryDelayMs = 3000 }) {
+  constructor({ email, password, retryCount = 4, retryDelayMs = 2000 }) {
     this.email = email;
     this.password = password;
     this.retryCount = retryCount;
@@ -220,16 +280,45 @@ export class GrdfClient {
     }
 
     this.loggedIn = true;
+    await this.#warmUpSession();
     logger.info('Logged in to GRDF');
+  }
+
+  /**
+   * Call `whoami` once, the way the web app does right after signing in.
+   *
+   * Best effort, and deliberately outside `get()`: the point is to let the
+   * gateway finish setting up the session before we ask it for data, not to
+   * check anything. Failures are logged and ignored — `get()` renews the
+   * session on its own if this was not enough — and going through `get()`
+   * would make a login trigger a login.
+   */
+  async #warmUpSession() {
+    try {
+      const response = await this.#fetch(`${API_BASE_URL}/e-connexion/users/whoami`, {
+        headers: { Accept: 'application/json', domain: 'grdf.fr' },
+        followRedirects: false,
+      });
+      logger.debug(
+        `Session warm-up: HTTP ${response.status} (${response.headers.get('content-type') ?? 'no content type'})`,
+      );
+    } catch (err) {
+      logger.debug(`Session warm-up failed, continuing anyway: ${err.message}`);
+    }
   }
 
   /**
    * Authenticated GET on the GRDF API, returning the parsed JSON.
    *
-   * Two quirks are handled here, both observed in production:
-   *   - the API sometimes answers with the HTML app shell instead of JSON
-   *     (transient): retried a few times;
-   *   - an expired session answers 401/403: we log in again once and replay.
+   * GRDF never says "your session is not valid" plainly. It is a single-page
+   * app behind a gateway, so a request it does not authenticate comes back
+   * either as a redirect to the login page or as the app's own HTML shell with
+   * a 200 — never as a clean 401. Three answers therefore mean "log in again":
+   * 401/403, a redirect, and the HTML shell.
+   *
+   * That is why redirects are NOT followed here (unlike during the login):
+   * following them turns an explicit "go and authenticate" into an opaque
+   * HTML page, and the reason for the failure is lost.
    *
    * @param {string} endpoint path under /api, e.g. '/e-conso/pce'
    * @param {Record<string, string|number|boolean>} params query string
@@ -243,49 +332,55 @@ export class GrdfClient {
     }
     const query = search.toString();
     const url = `${API_BASE_URL}${endpoint}${query ? `?${query}` : ''}`;
+    const where = `${endpoint}${query ? `?${query}` : ''}`;
 
     let lastError;
+    let reloginCount = 0;
+
     for (let attempt = 1; attempt <= this.retryCount; attempt += 1) {
       const response = await this.#fetch(url, {
         headers: { Accept: 'application/json', domain: 'grdf.fr' },
+        followRedirects: false,
       });
 
-      if (response.status === 401 || response.status === 403) {
-        // Session lost: force a new login, then let the loop replay the call.
-        logger.warn(`GRDF answered HTTP ${response.status} on ${endpoint}, logging in again`);
+      const rejection = await describeSessionRejection(response, where);
+
+      if (!rejection) {
+        if (!response.ok) {
+          throw new GrdfHttpError(
+            `GRDF answered HTTP ${response.status} on ${where}`,
+            response.status,
+          );
+        }
+        return response.json();
+      }
+
+      lastError = new GrdfHttpError(rejection.message, response.status);
+
+      if (attempt === this.retryCount) {
+        break;
+      }
+
+      // Retrying the very same session against a gateway that just refused it
+      // leads nowhere: renew it first, and only fall back to plain waiting
+      // once we have proven a fresh session does not help either.
+      if (reloginCount < MAX_RELOGIN_PER_REQUEST) {
+        reloginCount += 1;
+        logger.warn(
+          `${rejection.message}. Logging in again (attempt ${attempt}/${this.retryCount})`,
+        );
         this.logout();
         await this.login();
-        lastError = new GrdfHttpError(
-          `GRDF answered HTTP ${response.status} on ${endpoint}`,
-          response.status,
+      } else {
+        const delay = this.retryDelayMs * attempt;
+        logger.warn(
+          `${rejection.message}. Retrying in ${Math.round(delay / 1000)}s (attempt ${attempt}/${this.retryCount})`,
         );
-        continue;
+        await sleep(delay);
       }
-
-      if (!response.ok) {
-        throw new GrdfHttpError(
-          `GRDF answered HTTP ${response.status} on ${endpoint}`,
-          response.status,
-        );
-      }
-
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.includes('text/html')) {
-        lastError = new GrdfHttpError(
-          `GRDF answered HTML instead of JSON on ${endpoint} (query: ${query})`,
-          response.status,
-        );
-        logger.warn(`${lastError.message}. Retrying (attempt ${attempt}/${this.retryCount})`);
-        if (attempt < this.retryCount) {
-          await sleep(this.retryDelayMs);
-        }
-        continue;
-      }
-
-      return response.json();
     }
 
-    throw lastError ?? new GrdfHttpError(`GRDF request failed on ${endpoint}`, 500);
+    throw lastError ?? new GrdfHttpError(`GRDF request failed on ${where}`, 500);
   }
 
   /**
@@ -369,8 +464,11 @@ export class GrdfClient {
    * Redirects are followed by hand (`redirect: 'manual'`): the session cookies
    * are set on the intermediate hops of the login chain, and the automatic
    * redirect handling of `fetch` would drop them.
+   *
+   * `followRedirects: false` returns the 3xx as-is — what the API calls want,
+   * where a redirect is the diagnosis, not a step to walk through.
    */
-  async #fetch(url, options = {}) {
+  async #fetch(url, { followRedirects = true, ...options } = {}) {
     let currentUrl = url;
     let currentOptions = options;
 
@@ -390,7 +488,7 @@ export class GrdfClient {
       this.jar.storeFromResponse(currentUrl, response);
 
       const location = response.headers.get('location');
-      if (response.status >= 300 && response.status < 400 && location) {
+      if (followRedirects && response.status >= 300 && response.status < 400 && location) {
         currentUrl = new URL(location, currentUrl).toString();
         // A redirect always continues as a GET without the original body.
         currentOptions = { ...currentOptions, method: 'GET', body: undefined };

@@ -74,6 +74,14 @@ action forces a fetch immediately if you do not want to wait.
 private browser window. If GRDF asks you for a code or a captcha there, the
 integration cannot get through either.
 
+**"GRDF served its HTML app shell" or "the session was not accepted".** GRDF
+answered with a web page instead of data. Their site does that when it does not
+accept the session, and also when it is simply having a bad moment — it never
+says which. The integration signs in again and retries a few times on its own;
+if it still fails, wait a few minutes and use **Refresh the data now**. If it
+lasts, check that monespace.grdf.fr works in your browser: GRDF sometimes throttles
+an account that has signed in many times in a row.
+
 **No new data for several days.** Check on the GRDF website that the readings
 are actually published for your meter: a Gazpar meter that lost its radio link
 stops feeding GRDF, and the integration can only show what GRDF has.
