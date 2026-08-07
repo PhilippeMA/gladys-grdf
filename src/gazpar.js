@@ -23,6 +23,22 @@ import { StatePublisher } from './publisher.js';
 
 const logger = createLogger({ name: 'gazpar' });
 
+/**
+ * Days imported before the cursor is written again. Four features per day, so
+ * this is one full request worth of states: frequent enough that a failure
+ * loses almost nothing, rare enough not to rewrite the cursor file constantly.
+ */
+export const DAYS_PER_COMMIT = 25;
+
+/** Split a list into chunks of at most `size` entries. */
+export function chunk(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 /** Hard limit of the import window: GRDF keeps about three years of history. */
 export const MAX_HISTORY_DAYS = 1095;
 
@@ -147,17 +163,33 @@ export async function synchronizePce(
     }
   }
 
-  const states = buildStates(gladys, pce, readings);
-  // Publishing is paced: a long history import would otherwise trip the
-  // 300-states-per-minute limit of the host API and lose whole batches.
-  await (publisher ?? new StatePublisher()).publish(gladys, states);
+  // Publishing is paced (300 states/minute at the host API), so importing a
+  // long history takes minutes. Commit the cursor as we go, slice by slice:
+  // a failure halfway through then costs the remaining days, not the whole
+  // import — otherwise every attempt would restart from the first day and a
+  // history long enough to fail could never complete.
+  const pacedPublisher = publisher ?? new StatePublisher();
+  let days = 0;
+  let states = 0;
+  let newLastDay = lastDay;
 
-  const newLastDay = readings[readings.length - 1].day;
-  store.set(pce, newLastDay);
-  await store.save();
+  for (const slice of chunk(readings, DAYS_PER_COMMIT)) {
+    const sliceStates = buildStates(gladys, pce, slice);
+    await pacedPublisher.publish(gladys, sliceStates);
 
-  logger.info(`PCE ${pce}: ${readings.length} day(s) published, up to ${newLastDay}`);
-  return { pce, days: readings.length, states: states.length, lastDay: newLastDay };
+    days += slice.length;
+    states += sliceStates.length;
+    newLastDay = slice[slice.length - 1].day;
+    store.set(pce, newLastDay);
+    await store.save();
+
+    if (readings.length > DAYS_PER_COMMIT) {
+      logger.info(`PCE ${pce}: ${days}/${readings.length} day(s) imported (up to ${newLastDay})`);
+    }
+  }
+
+  logger.info(`PCE ${pce}: ${days} day(s) published, up to ${newLastDay}`);
+  return { pce, days, states, lastDay: newLastDay };
 }
 
 /**

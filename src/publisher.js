@@ -32,7 +32,29 @@ export const MAX_STATES_PER_WINDOW = 250;
 
 export const WINDOW_MS = 60_000;
 
+/**
+ * Slack added to every wait. Our window and the core's are anchored on two
+ * different events — we time from the acknowledgement, it times from the
+ * arrival — and the gap between them is a network round trip. Waiting exactly
+ * one window lands a hair BEFORE the core's reset, which costs a whole batch;
+ * waiting a little longer costs a second.
+ */
+export const WINDOW_MARGIN_MS = 5_000;
+
+/** How many times one batch may be re-sent after a rate-limit refusal. */
+export const MAX_RATE_LIMIT_RETRIES = 4;
+
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Is this error the host API saying "too many states, slow down"? */
+export function isRateLimited(err) {
+  return (
+    err?.status === 429 ||
+    err?.statusCode === 429 ||
+    err?.code === 'TOO_MANY_REQUESTS' ||
+    /too many requests|rate_limit/i.test(err?.message ?? '')
+  );
+}
 
 export class StatePublisher {
   /**
@@ -40,6 +62,8 @@ export class StatePublisher {
    * @param {number} [options.maxPerRequest]
    * @param {number} [options.maxPerWindow]
    * @param {number} [options.windowMs]
+   * @param {number} [options.marginMs]
+   * @param {number} [options.maxRateLimitRetries]
    * @param {(ms: number) => Promise<void>} [options.sleep] injectable, for the tests
    * @param {() => number} [options.now] injectable clock, for the tests
    */
@@ -47,12 +71,16 @@ export class StatePublisher {
     maxPerRequest = MAX_STATES_PER_REQUEST,
     maxPerWindow = MAX_STATES_PER_WINDOW,
     windowMs = WINDOW_MS,
+    marginMs = WINDOW_MARGIN_MS,
+    maxRateLimitRetries = MAX_RATE_LIMIT_RETRIES,
     sleep = defaultSleep,
     now = () => Date.now(),
   } = {}) {
     this.maxPerRequest = maxPerRequest;
     this.maxPerWindow = maxPerWindow;
     this.windowMs = windowMs;
+    this.marginMs = marginMs;
+    this.maxRateLimitRetries = maxRateLimitRetries;
     this.sleep = sleep;
     this.now = now;
     this.windowStartedAt = undefined;
@@ -75,11 +103,44 @@ export class StatePublisher {
       const available = await this.#waitForRoom();
       const size = Math.min(this.maxPerRequest, available, states.length - index);
       const batch = states.slice(index, index + size);
+
+      await this.#publishBatch(gladys, batch);
+
+      // The window is anchored on the moment the server ACKNOWLEDGED the first
+      // batch, never on the moment we decided to send it. The core starts its
+      // own window when the request arrives, so anchoring before the round
+      // trip leaves us ahead of it by the request latency — and a wait of
+      // exactly one window then lands just before the core's reset, which is
+      // precisely how a paced import still earns a 429.
+      if (this.countInWindow === 0) {
+        this.windowStartedAt = this.now();
+      }
       this.countInWindow += size;
-      await gladys.publishStates(batch);
       index += size;
     }
     return states.length;
+  }
+
+  /** Publish one batch, riding out a rate limit rather than losing the import. */
+  async #publishBatch(gladys, batch) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await gladys.publishStates(batch);
+        return;
+      } catch (err) {
+        if (!isRateLimited(err) || attempt >= this.maxRateLimitRetries) {
+          throw err;
+        }
+        // Our accounting and the core's disagree: forget ours, wait out a full
+        // window and send the very same batch again.
+        logger.warn(
+          `Gladys refused the batch (rate limit): waiting ${Math.ceil((this.windowMs + this.marginMs) / 1000)}s and publishing it again`,
+        );
+        await this.sleep(this.windowMs + this.marginMs);
+        this.windowStartedAt = undefined;
+        this.countInWindow = 0;
+      }
+    }
   }
 
   /**
@@ -89,19 +150,23 @@ export class StatePublisher {
   async #waitForRoom() {
     const now = this.now();
     if (this.windowStartedAt === undefined || now - this.windowStartedAt >= this.windowMs) {
-      this.windowStartedAt = now;
+      this.windowStartedAt = undefined; // re-anchored on the next acknowledgement
       this.countInWindow = 0;
+      return this.maxPerWindow;
     }
     const remaining = this.maxPerWindow - this.countInWindow;
     if (remaining > 0) {
       return remaining;
     }
-    const waitMs = this.windowStartedAt + this.windowMs - now;
+    // The margin covers the drift between the two clocks and the two windows:
+    // being a second early costs a rejected batch, being a second late costs
+    // a second.
+    const waitMs = this.windowStartedAt + this.windowMs + this.marginMs - now;
     if (waitMs > 0) {
       logger.info(`Rate limit: waiting ${Math.ceil(waitMs / 1000)}s before publishing more states`);
       await this.sleep(waitMs);
     }
-    this.windowStartedAt = this.now();
+    this.windowStartedAt = undefined;
     this.countInWindow = 0;
     return this.maxPerWindow;
   }

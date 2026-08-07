@@ -97,9 +97,20 @@ Three constraints shape the pacing, all of them found in the Gladys core:
   default). `onPoll` is still handled, in case the core ever asks on demand.
 - **300 states per minute, per integration.** Over that the host API answers
   429 and the batch is lost — the SDK does not retry. `StatePublisher` keeps a
-  budget of 250 per minute (the core's window and ours are never aligned, so the
-  margin absorbs the overlap) and waits for the next window instead of losing
+  budget of 250 per minute and waits for the next window instead of losing
   data. A full three-year import is therefore paced over ~18 minutes.
+
+  Two details make the pacing actually hold. The window is anchored on the
+  moment the server **acknowledged** the first batch, never on the moment we
+  decided to send it: the core starts counting when the request arrives, so
+  anchoring before the round trip leaves us ahead of it and a wait of exactly
+  one window resumes a hair too early — which is how a paced import still earns
+  a 429. A margin is added on top, and a batch refused anyway is waited out and
+  sent again rather than lost.
+
+  The cursor is committed every 25 days rather than at the end of the import,
+  so a failure halfway through costs the remaining days, not the whole run.
+
 - **GRDF is somebody else's website.** A 30-minute floor per meter guards the
   scheduled path whatever interval ends up applied; the explicit "Refresh now"
   button bypasses it.

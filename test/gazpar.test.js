@@ -4,12 +4,15 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  DAYS_PER_COMMIT,
   MAX_HISTORY_DAYS,
+  chunk,
   computeStartDay,
   selectNewReadings,
   synchronizeAll,
   synchronizePce,
 } from '../src/gazpar.js';
+import { addDays } from '../src/dates.js';
 import { deviceExternalId } from '../src/devices/gasMeter.js';
 import { SyncStore } from '../src/store.js';
 import { Throttle } from '../src/throttle.js';
@@ -381,4 +384,63 @@ test('synchronizeAll counts the meters still waiting to be added', async () => {
   assert.equal(summary.waiting, 2);
   assert.equal(summary.days, 0);
   assert.deepEqual(summary.errors, []);
+});
+
+test('chunk splits a list without losing anything', () => {
+  assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+  assert.deepEqual(chunk([], 2), []);
+});
+
+test('a long import commits its cursor as it goes, and resumes where it stopped', async () => {
+  // Importing months of history takes minutes because publishing is paced. If
+  // the cursor only moved at the very end, any failure would restart from the
+  // first day — forever, for a history long enough to fail.
+  const gladys = createGladysWithDevices();
+  const store = await createStore();
+  const days = Array.from({ length: DAYS_PER_COMMIT * 3 }, (_unused, index) =>
+    releve(addDays('2026-05-01', index)),
+  );
+  const client = createFakeClient({ releves: days });
+
+  // A publisher that dies in the middle of the second slice.
+  let slices = 0;
+  const failingPublisher = {
+    async publish(_gladys, states) {
+      slices += 1;
+      if (slices === 2) {
+        const err = new Error('Too Many Requests');
+        err.status = 429;
+        throw err;
+      }
+      return states.length;
+    },
+  };
+
+  await assert.rejects(
+    synchronizePce(gladys, {
+      client,
+      config: { ...CONFIG, history_days: 120 },
+      store,
+      pceEntry: { pce: PCE },
+      publisher: failingPublisher,
+      now: NOW,
+    }),
+    /Too Many Requests/,
+  );
+
+  // The first slice was committed, and only it.
+  const committed = store.get(PCE);
+  assert.equal(committed, addDays('2026-05-01', DAYS_PER_COMMIT - 1));
+
+  // A second attempt picks up the day after, instead of starting over.
+  const resumed = createFakeClient({ releves: days });
+  await synchronizePce(gladys, {
+    client: resumed,
+    config: { ...CONFIG, history_days: 120 },
+    store,
+    pceEntry: { pce: PCE },
+    now: NOW,
+  });
+  assert.equal(resumed.calls.consumption[0].startDate, addDays(committed, 1));
+  assert.equal(store.get(PCE), addDays('2026-05-01', DAYS_PER_COMMIT * 3 - 1));
 });
