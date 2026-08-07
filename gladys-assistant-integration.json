@@ -6,16 +6,21 @@
     "en": "Reads the daily gas consumption of your GRDF Gazpar meter from your GRDF account.",
     "fr": "Lit la consommation de gaz quotidienne de votre compteur Gazpar depuis votre compte GRDF."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/philippema/gladys-grdf:1.0.0",
+  "version": "1.1.0",
+  "docker_image": "ghcr.io/philippema/gladys-grdf:1.1.0",
   "gladys_version": ">=4.62.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-grdf/main/cover.png",
-  "transports": ["cloud"],
+  "transports": [
+    "cloud"
+  ],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Before you start", "fr": "Avant de commencer" },
+      "label": {
+        "en": "Before you start",
+        "fr": "Avant de commencer"
+      },
       "description": {
         "en": "This integration signs in to your GRDF customer account, the same one you use on monespace.grdf.fr, and reads the daily readings of your Gazpar meter. GRDF publishes them one to two days late: nothing shows up in real time. Your account must not require an extra verification step at login.",
         "fr": "Cette intégration se connecte à votre compte client GRDF, celui de monespace.grdf.fr, et lit les relevés quotidiens de votre compteur Gazpar. GRDF les publie avec un à deux jours de retard : rien n'arrive en temps réel. Votre compte ne doit pas demander d'étape de vérification supplémentaire à la connexion."
@@ -23,25 +28,37 @@
       "links": [
         {
           "url": "https://monespace.grdf.fr",
-          "label": { "en": "GRDF customer area", "fr": "Espace client GRDF" }
+          "label": {
+            "en": "GRDF customer area",
+            "fr": "Espace client GRDF"
+          }
         }
       ]
     },
     {
       "key": "email",
       "type": "string",
-      "label": { "en": "GRDF account email", "fr": "E-mail du compte GRDF" },
+      "label": {
+        "en": "GRDF account email",
+        "fr": "E-mail du compte GRDF"
+      },
       "description": {
         "en": "The email address you use to sign in on monespace.grdf.fr.",
         "fr": "L'adresse e-mail utilisée pour vous connecter sur monespace.grdf.fr."
       },
-      "placeholder": { "en": "you@example.com", "fr": "vous@exemple.com" },
+      "placeholder": {
+        "en": "you@example.com",
+        "fr": "vous@exemple.com"
+      },
       "required": true
     },
     {
       "key": "password",
       "type": "secret",
-      "label": { "en": "GRDF account password", "fr": "Mot de passe du compte GRDF" },
+      "label": {
+        "en": "GRDF account password",
+        "fr": "Mot de passe du compte GRDF"
+      },
       "description": {
         "en": "Stored encrypted by Gladys and only sent to GRDF.",
         "fr": "Stocké chiffré par Gladys et transmis uniquement à GRDF."
@@ -51,18 +68,27 @@
     {
       "key": "pce_list",
       "type": "string",
-      "label": { "en": "PCE to follow", "fr": "PCE à suivre" },
+      "label": {
+        "en": "PCE to follow",
+        "fr": "PCE à suivre"
+      },
       "description": {
         "en": "Optional. 14-digit metering point identifiers, separated by commas. Leave empty to follow every meter of the account.",
         "fr": "Facultatif. Identifiants de point de comptage à 14 chiffres, séparés par des virgules. Laissez vide pour suivre tous les compteurs du compte."
       },
-      "placeholder": { "en": "01234567890123", "fr": "01234567890123" },
+      "placeholder": {
+        "en": "01234567890123",
+        "fr": "01234567890123"
+      },
       "required": false
     },
     {
       "key": "history_days",
       "type": "number",
-      "label": { "en": "History to import (days)", "fr": "Historique à importer (jours)" },
+      "label": {
+        "en": "History to import (days)",
+        "fr": "Historique à importer (jours)"
+      },
       "description": {
         "en": "Days of past consumption imported on the first synchronization. GRDF keeps about three years.",
         "fr": "Nombre de jours de consommation passée importés à la première synchronisation. GRDF conserve environ trois ans."
@@ -75,7 +101,10 @@
     {
       "key": "poll_frequency",
       "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Refresh interval (s)",
+        "fr": "Intervalle de rafraîchissement (s)"
+      },
       "description": {
         "en": "How often GRDF is queried, in seconds. A new reading appears once a day, so there is no point going below a few hours.",
         "fr": "Fréquence d'interrogation de GRDF, en secondes. Un nouveau relevé n'arrive qu'une fois par jour : inutile de descendre en dessous de quelques heures."
@@ -89,7 +118,10 @@
   "actions": [
     {
       "key": "test_connection",
-      "label": { "en": "Test the GRDF connection", "fr": "Tester la connexion GRDF" },
+      "label": {
+        "en": "Test the GRDF connection",
+        "fr": "Tester la connexion GRDF"
+      },
       "description": {
         "en": "Signs in to GRDF and lists the metering points of the account.",
         "fr": "Se connecte à GRDF et liste les points de comptage du compte."
@@ -98,7 +130,10 @@
     },
     {
       "key": "refresh_now",
-      "label": { "en": "Refresh the data now", "fr": "Rafraîchir les données maintenant" },
+      "label": {
+        "en": "Refresh the data now",
+        "fr": "Rafraîchir les données maintenant"
+      },
       "description": {
         "en": "Imports the readings GRDF published since the last synchronization.",
         "fr": "Importe les relevés publiés par GRDF depuis la dernière synchronisation."
