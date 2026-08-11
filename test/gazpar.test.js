@@ -15,7 +15,7 @@ import {
 import { addDays } from '../src/dates.js';
 import { deviceExternalId } from '../src/devices/gasMeter.js';
 import { SyncStore } from '../src/store.js';
-import { Throttle } from '../src/throttle.js';
+import { FIRST_IMPORT_INTERVAL_MS, Throttle } from '../src/throttle.js';
 import { createFakeGladys } from './helpers/fakeGladys.js';
 
 const PCE = '01234567890123';
@@ -443,4 +443,53 @@ test('a long import commits its cursor as it goes, and resumes where it stopped'
   });
   assert.equal(resumed.calls.consumption[0].startDate, addDays(committed, 1));
   assert.equal(store.get(PCE), addDays('2026-05-01', DAYS_PER_COMMIT * 3 - 1));
+});
+
+test('a failed first import is retried well before the nominal floor', async () => {
+  // The user has just added the meter and is watching an empty dashboard: a
+  // half-hour wait after a GRDF hiccup is not acceptable there.
+  const gladys = createGladysWithDevices([PCE], { hasValues: false });
+  const store = await createStore();
+  const throttle = new Throttle();
+  const failing = createFakeClient({ failWith: new Error('GRDF hiccup') });
+
+  await assert.rejects(
+    synchronizePce(gladys, {
+      client: failing,
+      config: CONFIG,
+      store,
+      pceEntry: { pce: PCE },
+      throttle,
+      now: NOW,
+    }),
+  );
+
+  // Five minutes later the retry goes through, instead of waiting thirty.
+  const retryAt = new Date(NOW.getTime() + FIRST_IMPORT_INTERVAL_MS);
+  const working = createFakeClient({ releves: [releve('2026-08-05')] });
+  const result = await synchronizePce(gladys, {
+    client: working,
+    config: CONFIG,
+    store,
+    pceEntry: { pce: PCE },
+    throttle,
+    now: retryAt,
+  });
+
+  assert.equal(result.days, 1);
+});
+
+test('once a meter has imported, the nominal floor applies again', async () => {
+  const gladys = createGladysWithDevices();
+  const store = await createStore();
+  const throttle = new Throttle();
+  const client = createFakeClient({ releves: [releve('2026-08-05')] });
+  const base = { client, config: CONFIG, store, pceEntry: { pce: PCE }, throttle };
+
+  await synchronizePce(gladys, { ...base, now: NOW });
+  const laterButTooSoon = new Date(NOW.getTime() + FIRST_IMPORT_INTERVAL_MS);
+  await synchronizePce(gladys, { ...base, now: laterButTooSoon });
+
+  // Only the first pass reached GRDF: the meter has a cursor now.
+  assert.equal(client.calls.consumption.length, 1);
 });

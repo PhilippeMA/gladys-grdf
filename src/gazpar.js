@@ -20,6 +20,7 @@ import { addDays, today as todayOf } from './dates.js';
 import { buildStates, deviceExternalId } from './devices/gasMeter.js';
 import { normalizeReadings, withTemperatures } from './grdf/readings.js';
 import { StatePublisher } from './publisher.js';
+import { FIRST_IMPORT_INTERVAL_MS } from './throttle.js';
 
 const logger = createLogger({ name: 'gazpar' });
 
@@ -117,7 +118,15 @@ export async function synchronizePce(
     lastDay = undefined;
   }
 
-  if (throttle && !throttle.allow(pce, now?.getTime())) {
+  // A meter that has never imported anything is the one the user is waiting
+  // on, right after adding it. If that first import fails — a GRDF hiccup, a
+  // rate limit — the nominal half-hour floor would leave them looking at an
+  // empty dashboard for far too long, so it retries sooner.
+  const firstImport = !lastDay;
+  if (
+    throttle &&
+    !throttle.allow(pce, now?.getTime(), firstImport ? FIRST_IMPORT_INTERVAL_MS : undefined)
+  ) {
     logger.debug(`PCE ${pce}: skipped, GRDF was queried too recently`);
     return { pce, days: 0, states: 0, lastDay };
   }

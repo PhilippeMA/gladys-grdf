@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MIN_POLL_INTERVAL_MS, Throttle } from '../src/throttle.js';
+import { FIRST_IMPORT_INTERVAL_MS, MIN_POLL_INTERVAL_MS, Throttle } from '../src/throttle.js';
 
 const START = Date.parse('2026-08-07T09:00:00.000Z');
 
@@ -45,4 +45,21 @@ test('reset gives a key its next run back', () => {
 test('the default floor stays well below the daily publication rhythm', () => {
   assert.ok(MIN_POLL_INTERVAL_MS < 24 * 3600 * 1000);
   assert.ok(MIN_POLL_INTERVAL_MS >= 5 * 60 * 1000);
+});
+
+test('a call can ask for a shorter floor than the default', () => {
+  const throttle = new Throttle();
+  throttle.allow('pce', START);
+  // The nominal floor refuses...
+  assert.equal(throttle.allow('pce', START + FIRST_IMPORT_INTERVAL_MS), false);
+  // ...but a first import, which the user is waiting on, may retry sooner.
+  assert.equal(
+    throttle.allow('pce', START + FIRST_IMPORT_INTERVAL_MS, FIRST_IMPORT_INTERVAL_MS),
+    true,
+  );
+});
+
+test('the first-import floor still keeps GRDF out of a retry storm', () => {
+  assert.ok(FIRST_IMPORT_INTERVAL_MS < MIN_POLL_INTERVAL_MS);
+  assert.ok(FIRST_IMPORT_INTERVAL_MS >= 60_000);
 });
