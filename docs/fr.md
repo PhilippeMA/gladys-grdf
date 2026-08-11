@@ -85,8 +85,10 @@ l'intégration ne passera pas non plus.
 **Les capteurs existent mais restent vides.** Vérifiez que le compteur est bien
 **ajouté à votre maison**, et pas seulement listé dans l'onglet **Découverte** :
 Gladys ne conserve les mesures que des appareils que vous avez ajoutés. Une fois
-ajouté, l'historique est importé en quelques secondes — ou utilisez
-**Rafraîchir les données maintenant**.
+ajouté, l'historique est importé en quelques secondes, et au pire dans la minute
+— ou utilisez **Rafraîchir les données maintenant**. Un long historique met
+quelques minutes à s'afficher entièrement : il est injecté en douceur (voir
+ci-dessus), du jour le plus ancien au plus récent.
 
 **« GRDF served its HTML app shell » ou « the session was not accepted ».** GRDF
 a répondu par une page web au lieu de données. Son site fait cela quand il

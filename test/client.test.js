@@ -15,6 +15,7 @@ import {
   GrdfHttpError,
   extractOktaErrorMessage,
   extractStateToken,
+  redactUrl,
 } from '../src/grdf/client.js';
 
 const LOGIN_PAGE_HTML = `<!doctype html><html><head><script>
@@ -407,4 +408,64 @@ test('logout forces the next call to log in again', async (t) => {
 
   await client.login();
   assert.equal(calls.filter((call) => call.url.endsWith('/idp/idx/identify')).length, 2);
+});
+
+test('redactUrl keeps the diagnosis and drops the credentials', () => {
+  // The Okta stateToken lives in the query string, and these messages are
+  // shown to the user and written to the logs.
+  assert.equal(
+    redactUrl('https://connexion.grdf.fr/login/token/redirect?stateToken=02.id.secret'),
+    'https://connexion.grdf.fr/login/token/redirect',
+  );
+  assert.equal(
+    redactUrl('https://monespace.grdf.fr/api/e-conso/pce'),
+    'https://monespace.grdf.fr/api/e-conso/pce',
+  );
+  assert.equal(redactUrl('not a url?token=secret'), 'not a url');
+});
+
+test('a redirect loop is reported without leaking the session token', async (t) => {
+  stubFetch(t, {
+    ...loginRoutes(),
+    // The endpoint bounces back to itself, forever.
+    'https://connexion.grdf.fr/login/token/redirect': () =>
+      redirectResponse('https://connexion.grdf.fr/login/token/redirect?stateToken=02.id.secret'),
+  });
+
+  await assert.rejects(createClient().login(), (err) => {
+    assert.match(err.message, /redirecting/);
+    assert.doesNotMatch(err.message, /stateToken/, 'the token must never reach the message');
+    assert.doesNotMatch(err.message, /02\.id\.secret/);
+    return true;
+  });
+});
+
+test('a redirect answered on an API call is reported without its query string', async (t) => {
+  stubFetch(t, {
+    ...loginRoutes(),
+    'https://monespace.grdf.fr/api': () =>
+      redirectResponse('https://connexion.grdf.fr/oauth2/authorize?state=02.id.secret'),
+  });
+
+  await assert.rejects(createClient({ retryCount: 1 }).getPceList(), (err) => {
+    assert.match(err.message, /oauth2\/authorize/);
+    assert.doesNotMatch(err.message, /02\.id\.secret/);
+    return true;
+  });
+});
+
+test('a login starts from an empty jar, never on the leftovers of a failed one', async (t) => {
+  const calls = stubFetch(t, loginRoutes());
+  const client = createClient();
+
+  // A previous attempt died halfway and left a stale session behind.
+  client.jar.set('auth_token', 'stale', { domain: 'grdf.fr' });
+  client.jar.set('JSESSIONID', 'half-open-pipeline', { domain: 'grdf.fr' });
+
+  await client.login();
+
+  // The very first request of the flow carried none of it: presenting a stale
+  // session is what makes GRDF bounce between its login page and its redirect.
+  assert.equal(calls[0].options.headers.Cookie, undefined);
+  assert.equal(client.jar.get('auth_token'), 'the-token');
 });

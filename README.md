@@ -129,6 +129,13 @@ and skips the meters the user has not added — without touching their cursor.
 `onDeviceCreated` then imports the history the moment a meter is added, and
 `onDeviceDeleted` forgets its cursor so re-adding starts fresh.
 
+`onDeviceCreated` is a single event, though, and the moment it covers is the
+one that matters most: a fresh install, the user adding the meter, expecting
+the dashboard to fill. Miss it and they wait hours. So while any meter is
+offered but not added, a catch-up pass runs every minute (for an hour) and
+imports as soon as one appears. It is free while it waits: a meter that has
+not been added triggers no GRDF request at all.
+
 As a safety net, a cursor claiming days were published for a device that has
 never held a single value is treated as wrong: it is rewound and the history
 re-imported.

@@ -45,7 +45,9 @@ const OKTA_HEADERS = {
 };
 
 const REQUEST_TIMEOUT_MS = 30_000;
-const MAX_REDIRECTS = 10;
+// Browsers stop at 20; the login chain normally takes four or five hops, so
+// anything approaching this is a loop, not a long chain.
+const MAX_REDIRECTS = 20;
 
 /**
  * How many times a single request may renew the session before we accept that
@@ -79,6 +81,23 @@ export class GrdfAuthError extends Error {
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A URL fit to appear in a message the user will read.
+ *
+ * The GRDF login carries its session credentials in the query string — the
+ * `stateToken` of the Okta pipeline is one — and our errors surface in the
+ * Configuration screen and in the logs. Keep the origin and the path, which
+ * carry the whole diagnostic value, and drop the rest.
+ */
+export function redactUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return String(url).split('?')[0];
+  }
+}
 
 /**
  * Okta escapes the state token inside the HTML page (`\x2D` for `-`).
@@ -148,10 +167,12 @@ export async function describeSessionRejection(response, where) {
   }
 
   if (response.status >= 300 && response.status < 400) {
-    const location = response.headers.get('location') ?? 'an unknown location';
+    const location = response.headers.get('location');
     return {
       kind: 'redirect',
-      message: `GRDF redirected ${where} to ${location} instead of answering: the session was not accepted`,
+      // Redacted: a redirect back into the login flow carries session tokens
+      // in its query string, and this message reaches the user's screen.
+      message: `GRDF redirected ${where} to ${location ? redactUrl(location) : 'an unknown location'} instead of answering: the session was not accepted`,
     };
   }
 
@@ -223,6 +244,13 @@ export class GrdfClient {
     if (!this.email || !this.password) {
       throw new GrdfAuthError('Email and password are required to connect to GRDF.');
     }
+
+    // Start from an empty jar. A previous attempt that failed halfway leaves
+    // cookies behind — a half-open Okta pipeline, a stale session — and
+    // presenting those to a fresh login is what makes GRDF bounce us between
+    // its login page and its redirect endpoint until we give up. A login is a
+    // new session by definition.
+    this.jar.clear();
 
     logger.debug('Login step 1/4: loading the GRDF login page');
     const startResponse = await this.#fetch(START_URL);
@@ -498,6 +526,13 @@ export class GrdfClient {
       return response;
     }
 
-    throw new GrdfHttpError(`Too many redirects while calling ${url}`, 508);
+    // A loop here means GRDF keeps sending us back to authenticate: the
+    // session cookie it just set is not being accepted. Nothing to retry
+    // inside this call — the caller renews the session from scratch.
+    throw new GrdfHttpError(
+      `GRDF kept redirecting ${redactUrl(url)} in a loop (${MAX_REDIRECTS} hops): ` +
+        'it would not accept the session it had just created.',
+      508,
+    );
   }
 }

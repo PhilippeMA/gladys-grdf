@@ -62,6 +62,24 @@ const publisher = new StatePublisher();
 let refreshTimer = null;
 
 /**
+ * Catch-up timer, armed while at least one meter is offered but not yet added
+ * to the home.
+ *
+ * `onDeviceCreated` is the fast path, but it is a single event: miss it — a
+ * reconnection at the wrong moment, an event lost in flight — and the user
+ * waits for the next scheduled refresh, hours later, staring at an empty
+ * dashboard right after installing. This loop closes that window. It costs
+ * nothing while it waits: a meter that has not been added makes no GRDF
+ * request at all, only a local "which devices exist?" question to Gladys.
+ */
+let pendingCheckTimer = null;
+let pendingChecksLeft = 0;
+
+/** How often, and for how long, we look for meters the user has just added. */
+const PENDING_CHECK_INTERVAL_MS = 60_000;
+const PENDING_CHECK_MAX_PASSES = 60;
+
+/**
  * GRDF is a slow, rate-sensitive website and Gladys can call us from several
  * directions at once (poll of two meters, an action, a config change). One
  * exchange at a time: the queue keeps the login flow and the API calls sane.
@@ -132,6 +150,46 @@ function stopRefreshTimer() {
   }
 }
 
+/** Watch for meters the user adds, until they all are (or we give up waiting). */
+function schedulePendingCheck() {
+  pendingChecksLeft = PENDING_CHECK_MAX_PASSES;
+  if (pendingCheckTimer) {
+    return;
+  }
+  logger.info(
+    'Some meters are not added to your home yet: watching for them every minute, ' +
+      'so their history is imported as soon as you add them',
+  );
+  pendingCheckTimer = setInterval(() => {
+    pendingChecksLeft -= 1;
+    if (pendingChecksLeft <= 0) {
+      logger.info('Still waiting for meters to be added: falling back to the normal refresh cycle');
+      stopPendingCheck();
+      return;
+    }
+    enqueue(async () => {
+      const summary = await synchronizeAll(gladys, {
+        client,
+        config,
+        store,
+        pceEntries,
+        throttle: pollThrottle,
+        publisher,
+      });
+      if (summary.waiting === 0) {
+        stopPendingCheck();
+      }
+    }).catch((err) => logger.error('Catch-up pass failed', err));
+  }, PENDING_CHECK_INTERVAL_MS);
+}
+
+function stopPendingCheck() {
+  if (pendingCheckTimer) {
+    clearInterval(pendingCheckTimer);
+    pendingCheckTimer = null;
+  }
+}
+
 /**
  * Full pass: list the meters, publish them, import the new readings, and
  * report the application-level status shown in the Configuration screen.
@@ -145,6 +203,7 @@ function stopRefreshTimer() {
 async function initialize({ force = false } = {}) {
   if (!isConfigured(config)) {
     stopRefreshTimer();
+    stopPendingCheck();
     logger.warn('No GRDF credentials configured yet: waiting for the configuration');
     await gladys.setConnectionStatus(false, {
       en: 'Enter your GRDF account email and password in the configuration.',
@@ -170,6 +229,11 @@ async function initialize({ force = false } = {}) {
       throttle: force ? undefined : pollThrottle,
       publisher,
     });
+    if (summary.waiting > 0) {
+      schedulePendingCheck();
+    } else {
+      stopPendingCheck();
+    }
     if (summary.errors.length > 0) {
       throw new Error(summary.errors.map((error) => `${error.pce}: ${error.message}`).join(' | '));
     }
@@ -343,6 +407,7 @@ gladys.on('connected', async () => {
 gladys.handleShutdown((signal) => {
   logger.info(`Received ${signal} -> graceful shutdown`);
   stopRefreshTimer();
+  stopPendingCheck();
   client?.logout();
 });
 

@@ -79,7 +79,9 @@ integration cannot get through either.
 **The sensors exist but stay empty.** Check that the meter is really added to
 your home, and not merely listed in the **Discovery** tab: Gladys only stores
 measurements for devices you added. Once added, the history is imported within
-seconds — or use **Refresh the data now**.
+seconds, and at worst within a minute — or use **Refresh the data now**. A long
+history takes a few minutes to appear in full: it is fed in gently (see above),
+oldest day first.
 
 **"GRDF served its HTML app shell" or "the session was not accepted".** GRDF
 answered with a web page instead of data. Their site does that when it does not
