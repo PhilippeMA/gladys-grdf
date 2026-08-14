@@ -6,8 +6,8 @@
     "en": "Reads the daily gas consumption of your GRDF Gazpar meter from your GRDF account.",
     "fr": "Lit la consommation de gaz quotidienne de votre compteur Gazpar depuis votre compte GRDF."
   },
-  "version": "1.1.4",
-  "docker_image": "ghcr.io/philippema/gladys-grdf:1.1.4",
+  "version": "1.1.5",
+  "docker_image": "ghcr.io/philippema/gladys-grdf:1.1.5",
   "gladys_version": ">=4.86.0",
   "cover_image": "https://raw.githubusercontent.com/PhilippeMA/gladys-grdf/main/cover.png",
   "categories": ["energy"],
