@@ -25,6 +25,30 @@ test('every manifest action is registered in index.js', () => {
   }
 });
 
+test('the catalog categories say what this integration is about', () => {
+  // The shelves the integration sits on in the catalog sidebar. Reading a gas
+  // meter is energy monitoring and nothing else: the outside temperature it
+  // also publishes is a by-product of the GRDF readings, not a reason to file
+  // this next to weather stations.
+  assert.deepEqual(manifest.categories, ['energy']);
+});
+
+test('declaring catalog categories requires Gladys >= 4.86.0', () => {
+  // The vocabulary itself is checked by the store validator (unknown keys are
+  // dropped there with a warning). What this pins is the coupling rule: older
+  // cores reject any unknown manifest field, so a manifest declaring
+  // `categories` must not claim compatibility below the first release that
+  // accepts it.
+  assert.ok(manifest.categories.length >= 1 && manifest.categories.length <= 3);
+  const minVersion = manifest.gladys_version.match(/>=\s*(\d+)\.(\d+)\.\d+/);
+  assert.ok(minVersion, 'gladys_version must declare a minimum version');
+  const [, major, minor] = minVersion.map(Number);
+  assert.ok(
+    major > 4 || (major === 4 && minor >= 86),
+    `categories requires gladys_version >= 4.86.0, got "${manifest.gladys_version}"`,
+  );
+});
+
 test('config_schema defaults stay consistent with DEFAULT_CONFIG', () => {
   for (const field of manifest.config_schema) {
     if (field.default !== undefined) {

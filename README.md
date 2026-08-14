@@ -188,7 +188,14 @@ npx github:GladysAssistant/integration-store .
 ## Publish
 
 1. Push this repository to GitHub, public, with the topic
-   `gladys-assistant-integration`.
+   `gladys-assistant-integration`. The manifest declares the `energy`
+   category — the shelf the integration sits on in the catalog sidebar
+   (Gladys 4.86+, 1 to 3 keys among `climate`, `lighting`, `energy`,
+   `security`, `multimedia`, `appliances`, `environment`, `protocols`,
+   `network`, `notifications`, `assistants`, `services`). Declaring the field
+   requires a `gladys_version` minimum of **4.86.0 or later**: older cores
+   reject unknown manifest fields, and the store validator enforces the
+   coupling.
 2. **Actions → Release → Run workflow**, pick `patch`, `minor` or `major`: the
    workflow bumps the version everywhere (`package.json` + manifest
    `version`/`docker_image`), pushes the `vX.Y.Z` tag and builds the
