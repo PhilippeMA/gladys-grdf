@@ -23,8 +23,9 @@ readings the website shows you.
 ## Configuration
 
 1. Open the **Configuration** tab of the integration.
-2. Enter the **email** and the **password** of your GRDF account. The password is
-   stored encrypted by Gladys and is only ever sent to GRDF.
+2. Enter the **email** and the **password** of your GRDF account. Once saved,
+   the password is never sent back to your browser, and it is only ever
+   transmitted to GRDF — see [Privacy](#privacy) for how it is stored.
 3. Leave **PCE to follow** empty to follow every meter of the account. If your
    account holds several metering points and you only want some of them, list
    their 14-digit PCE numbers, separated by commas. You will find a PCE on your
@@ -108,3 +109,14 @@ verbose version.
 
 Your GRDF credentials and your consumption data stay between your Gladys server
 and GRDF. Nothing is sent anywhere else, and no third-party service is involved.
+
+**How your password is stored.** Gladys marks it as a secret, which means it is
+never sent back to the browser once saved: the Configuration screen only knows
+that a password is set, never its value. It is, however, stored **as-is** in
+your Gladys database — Gladys stores its settings in a plain SQLite file, with
+no encryption at rest. Anyone with access to that server, or to a backup of it,
+can read it, exactly as for any other credential you enter in Gladys.
+
+GRDF offers individuals no other way in: no API key, no token, no
+application-specific password. Signing in with your account password is the only
+option, which is why it is worth knowing where it ends up.

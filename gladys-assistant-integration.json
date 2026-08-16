@@ -59,8 +59,8 @@
         "fr": "Mot de passe du compte GRDF"
       },
       "description": {
-        "en": "Stored encrypted by Gladys and only sent to GRDF.",
-        "fr": "Stocké chiffré par Gladys et transmis uniquement à GRDF."
+        "en": "Never sent back to your browser once saved, and only ever transmitted to GRDF. Like every Gladys setting, it is stored as-is in your server's database.",
+        "fr": "Jamais renvoyé à votre navigateur une fois enregistré, et transmis uniquement à GRDF. Comme tout réglage Gladys, il est stocké tel quel dans la base de données de votre serveur."
       },
       "required": true
     },

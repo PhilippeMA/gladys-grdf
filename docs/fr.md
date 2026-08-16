@@ -25,8 +25,9 @@ quotidiens que le site vous affiche.
 ## Configuration
 
 1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Saisissez l'**e-mail** et le **mot de passe** de votre compte GRDF. Le mot de
-   passe est stocké chiffré par Gladys et n'est transmis qu'à GRDF.
+2. Saisissez l'**e-mail** et le **mot de passe** de votre compte GRDF. Une fois
+   enregistré, le mot de passe n'est jamais renvoyé à votre navigateur, et il
+   n'est transmis qu'à GRDF — voir [Vie privée](#vie-privée) pour son stockage.
 3. Laissez **PCE à suivre** vide pour suivre tous les compteurs du compte. Si
    votre compte comporte plusieurs points de comptage et que vous n'en voulez
    qu'une partie, listez leurs numéros de PCE à 14 chiffres, séparés par des
@@ -117,3 +118,15 @@ la version bavarde.
 
 Vos identifiants GRDF et vos données de consommation restent entre votre serveur
 Gladys et GRDF. Rien n'est envoyé ailleurs, aucun service tiers n'intervient.
+
+**Comment votre mot de passe est stocké.** Gladys le marque comme secret, ce qui
+signifie qu'il n'est jamais renvoyé au navigateur une fois enregistré : l'écran
+de configuration sait seulement qu'un mot de passe est défini, jamais sa valeur.
+En revanche il est stocké **tel quel** dans la base de données de Gladys — un
+simple fichier SQLite, sans chiffrement au repos. Toute personne ayant accès à ce
+serveur, ou à une sauvegarde, peut le lire, exactement comme pour n'importe quel
+autre identifiant saisi dans Gladys.
+
+GRDF n'offre aucune autre porte d'entrée aux particuliers : ni clé d'API, ni
+jeton, ni mot de passe applicatif. Se connecter avec le mot de passe du compte
+est la seule option — raison de plus pour savoir où il atterrit.
