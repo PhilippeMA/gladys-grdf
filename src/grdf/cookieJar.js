@@ -81,11 +81,28 @@ export class CookieJar {
    */
   header(requestUrl) {
     const url = new URL(requestUrl);
-    return [...this.cookies.values()]
-      .filter(
-        (cookie) =>
-          domainMatches(url.hostname, cookie.domain) && pathMatches(url.pathname, cookie.path),
-      )
+    const matching = [...this.cookies.values()].filter(
+      (cookie) =>
+        domainMatches(url.hostname, cookie.domain) && pathMatches(url.pathname, cookie.path),
+    );
+
+    // RFC 6265 §5.4: most specific path first, and — since the same name can
+    // legitimately exist under several paths or domains — only the winner of
+    // each name is sent. A browser does the same. Handing GRDF `sid=old;
+    // sid=new` lets it read whichever it likes: during the OIDC round trip of
+    // the login, where Okta re-sets its session cookies on different paths,
+    // that is enough to keep bouncing between the login page and the app.
+    matching.sort((a, b) => b.path.length - a.path.length || b.domain.length - a.domain.length);
+
+    const sent = new Set();
+    return matching
+      .filter((cookie) => {
+        if (sent.has(cookie.name)) {
+          return false;
+        }
+        sent.add(cookie.name);
+        return true;
+      })
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join('; ');
   }

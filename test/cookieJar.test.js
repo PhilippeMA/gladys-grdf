@@ -97,3 +97,50 @@ test('get finds a cookie whatever host set it, and clear empties the jar', () =>
   jar.clear();
   assert.equal(jar.get('auth_token'), undefined);
 });
+
+test('the same cookie name is never sent twice, most specific path first', () => {
+  // Okta re-sets its session cookies on different paths during the login
+  // round trip. Sending `sid=old; sid=new` lets GRDF read whichever it likes,
+  // which is one way a login chain never converges.
+  const jar = new CookieJar();
+  jar.storeFromResponse('https://connexion.grdf.fr/', responseWith(['sid=root; Path=/']));
+  jar.storeFromResponse(
+    'https://connexion.grdf.fr/oauth2/authorize',
+    responseWith(['sid=specific; Path=/oauth2']),
+  );
+
+  const header = jar.header('https://connexion.grdf.fr/oauth2/authorize');
+
+  assert.equal(header, 'sid=specific');
+  assert.equal(header.match(/sid=/g).length, 1);
+});
+
+test('a cookie whose path does not match still lets the other one through', () => {
+  const jar = new CookieJar();
+  jar.storeFromResponse('https://connexion.grdf.fr/', responseWith(['sid=root; Path=/']));
+  jar.storeFromResponse(
+    'https://connexion.grdf.fr/oauth2/authorize',
+    responseWith(['sid=specific; Path=/oauth2']),
+  );
+
+  // Outside /oauth2, only the root cookie matches.
+  assert.equal(jar.header('https://connexion.grdf.fr/idp/idx/identify'), 'sid=root');
+});
+
+test('the more specific host wins over a domain-wide cookie of the same name', () => {
+  const jar = new CookieJar();
+  jar.storeFromResponse('https://connexion.grdf.fr/', responseWith(['ln=wide; Domain=.grdf.fr']));
+  jar.storeFromResponse('https://connexion.grdf.fr/', responseWith(['ln=host']));
+
+  assert.equal(jar.header('https://connexion.grdf.fr/'), 'ln=host');
+});
+
+test('different cookie names are all sent', () => {
+  const jar = new CookieJar();
+  jar.storeFromResponse('https://connexion.grdf.fr/', responseWith(['sid=a; Path=/']));
+  jar.storeFromResponse('https://connexion.grdf.fr/oauth2', responseWith(['DT=b; Path=/oauth2']));
+
+  const header = jar.header('https://connexion.grdf.fr/oauth2/authorize');
+  assert.ok(header.includes('sid=a'));
+  assert.ok(header.includes('DT=b'));
+});

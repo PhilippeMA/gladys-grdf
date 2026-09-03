@@ -493,3 +493,49 @@ test('once a meter has imported, the nominal floor applies again', async () => {
   // Only the first pass reached GRDF: the meter has a cursor now.
   assert.equal(client.calls.consumption.length, 1);
 });
+
+test('an empty answer from GRDF is reported as such, not as a silent no-op', async () => {
+  // "no new reading" has three causes and they need telling apart from the
+  // outside: nothing published, rows without measurement, or already imported.
+  const gladys = createGladysWithDevices();
+  const store = await createStore();
+  const client = createFakeClient({ releves: [] });
+
+  const result = await synchronizePce(gladys, {
+    client,
+    config: CONFIG,
+    store,
+    pceEntry: { pce: PCE },
+    now: NOW,
+  });
+
+  assert.equal(result.days, 0);
+  assert.equal(store.get(PCE), undefined, 'an empty answer must not move the cursor');
+});
+
+test('rows carrying no measurement do not count as imported days', async () => {
+  const gladys = createGladysWithDevices();
+  const store = await createStore();
+  const client = createFakeClient({
+    releves: [
+      releve('2026-08-05', {
+        qualificationReleve: 'Absence de Données',
+        energieConsomme: null,
+        volumeBrutConsomme: null,
+        indexFin: null,
+      }),
+    ],
+  });
+
+  const result = await synchronizePce(gladys, {
+    client,
+    config: CONFIG,
+    store,
+    pceEntry: { pce: PCE },
+    now: NOW,
+  });
+
+  assert.equal(result.days, 0);
+  assert.equal(store.get(PCE), undefined);
+  assert.deepEqual(gladys.published, [], 'nothing must be published for a day without data');
+});

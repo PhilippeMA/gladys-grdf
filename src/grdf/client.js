@@ -63,20 +63,30 @@ export const CONSUMPTION_TYPES = {
   PUBLISHED: 'publiees',
 };
 
-/** An HTTP error returned by GRDF, carrying the status so callers can react. */
+/**
+ * An HTTP error returned by GRDF, carrying the status so callers can react.
+ * Transient by nature: `retryable` marks it as worth another attempt.
+ */
 export class GrdfHttpError extends Error {
   constructor(message, statusCode) {
     super(message);
     this.name = 'GrdfHttpError';
     this.statusCode = statusCode;
+    this.retryable = true;
   }
 }
 
-/** Login refused (bad credentials, MFA, captcha…): retrying will not help. */
+/**
+ * Login refused (bad credentials, MFA, captcha…): retrying will not help, and
+ * repeating a refused password is how an account gets locked. The one
+ * exception is flagged with `retryable`: a flow that broke halfway through the
+ * Okta round trip did not refuse anything, it just did not finish.
+ */
 export class GrdfAuthError extends Error {
-  constructor(message) {
+  constructor(message, { retryable = false } = {}) {
     super(message);
     this.name = 'GrdfAuthError';
+    this.retryable = retryable;
   }
 }
 
@@ -200,11 +210,12 @@ export class GrdfClient {
   /**
    * @param {{ email: string, password: string, retryCount?: number, retryDelayMs?: number }} options
    */
-  constructor({ email, password, retryCount = 4, retryDelayMs = 2000 }) {
+  constructor({ email, password, retryCount = 4, retryDelayMs = 2000, loginRetryCount = 3 }) {
     this.email = email;
     this.password = password;
     this.retryCount = retryCount;
     this.retryDelayMs = retryDelayMs;
+    this.loginRetryCount = loginRetryCount;
     this.jar = new CookieJar();
     this.loggedIn = false;
     /** In-flight login, so concurrent calls share one flow. @type {Promise<void>|undefined} */
@@ -233,11 +244,45 @@ export class GrdfClient {
       return;
     }
     if (!this.loginPromise) {
-      this.loginPromise = this.#login().finally(() => {
+      this.loginPromise = this.#loginWithRetry().finally(() => {
         this.loginPromise = undefined;
       });
     }
     await this.loginPromise;
+  }
+
+  /**
+   * Run the login flow, retrying the transient failures.
+   *
+   * A login that dies in the middle of the Okta round trip — a redirect chain
+   * that will not converge, an HTTP error on one of its hops — is usually the
+   * kind of thing a fresh attempt clears. Without a retry here, one such
+   * hiccup costs a whole refresh cycle: the failure propagates out of `get()`,
+   * the synchronization is abandoned, and nothing tries again until the next
+   * scheduled pass, hours later.
+   *
+   * Credential failures are NOT retried: a wrong password or an account
+   * asking for a second factor will not fix itself, and hammering the login
+   * of somebody else's website with credentials it just refused is exactly
+   * how an account gets locked.
+   */
+  async #loginWithRetry() {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await this.#login();
+        return;
+      } catch (err) {
+        if (!err?.retryable || attempt >= this.loginRetryCount) {
+          throw err;
+        }
+        const delay = this.retryDelayMs * attempt;
+        logger.warn(
+          `Login attempt ${attempt}/${this.loginRetryCount} failed (${err.message}). ` +
+            `Retrying in ${Math.round(delay / 1000)}s`,
+        );
+        await sleep(delay);
+      }
+    }
   }
 
   async #login() {
@@ -302,8 +347,12 @@ export class GrdfClient {
     }
 
     if (!this.jar.get('auth_token')) {
+      // The credentials were accepted (we got this far) but the redirect chain
+      // ended somewhere that set no session: not a refusal, a flow that did
+      // not finish. Worth another attempt.
       throw new GrdfAuthError(
         'GRDF did not deliver an authentication cookie at the end of the login flow.',
+        { retryable: true },
       );
     }
 
@@ -529,9 +578,12 @@ export class GrdfClient {
     // A loop here means GRDF keeps sending us back to authenticate: the
     // session cookie it just set is not being accepted. Nothing to retry
     // inside this call — the caller renews the session from scratch.
+    // The named URL is where the chain STARTED, not where it turns in circles:
+    // an Okta round trip legitimately walks several hosts, so the last hop is
+    // the informative one.
     throw new GrdfHttpError(
-      `GRDF kept redirecting ${redactUrl(url)} in a loop (${MAX_REDIRECTS} hops): ` +
-        'it would not accept the session it had just created.',
+      `GRDF sent ${redactUrl(url)} through ${MAX_REDIRECTS} redirects without ever landing on a page ` +
+        `(last hop: ${redactUrl(currentUrl)}): it would not settle on the session it had just created.`,
       508,
     );
   }

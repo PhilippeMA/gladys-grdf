@@ -145,13 +145,30 @@ export async function synchronizePce(
     endDate: today,
   });
 
-  let readings = normalizeReadings(consumption?.[pce]?.releves);
-  readings = selectNewReadings(readings, lastDay);
+  const rawReleves = consumption?.[pce]?.releves;
+  const rawCount = Array.isArray(rawReleves) ? rawReleves.length : 0;
+  const usable = normalizeReadings(rawReleves);
+  let readings = selectNewReadings(usable, lastDay);
 
   if (readings.length === 0) {
-    logger.info(`PCE ${pce}: no new reading`);
+    // "No new reading" has three very different causes, and telling them apart
+    // from the outside is impossible without these counts: GRDF published
+    // nothing for the period, or it published rows carrying no measurement
+    // (a meter that did not report), or everything it returned is already
+    // imported. Say which.
+    let because = 'GRDF published nothing for this period';
+    if (rawCount > 0 && usable.length === 0) {
+      because = `GRDF returned ${rawCount} row(s) but none carries a measurement (meter not reporting?)`;
+    } else if (usable.length > 0) {
+      because = `the ${usable.length} day(s) GRDF returned are already imported (up to ${lastDay})`;
+    }
+    logger.info(`PCE ${pce}: no new reading — ${because}`);
     return { pce, days: 0, states: 0, lastDay };
   }
+
+  logger.debug(
+    `PCE ${pce}: GRDF returned ${rawCount} row(s), ${usable.length} usable, ${readings.length} new`,
+  );
 
   // GRDF often leaves `temperature` null in the readings while the dedicated
   // endpoint still knows it. Best effort: a failure there must not lose the

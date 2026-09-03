@@ -18,6 +18,9 @@ import {
   redactUrl,
 } from '../src/grdf/client.js';
 
+/** Hop ceiling of the client, mirrored here to build a chain that exceeds it. */
+const MAX_REDIRECTS = 20;
+
 const LOGIN_PAGE_HTML = `<!doctype html><html><head><script>
   var oktaData = {"signIn":{"stateToken":"02.id.abc\\x2Ddef\\x2D123"}};
 </script></head><body></body></html>`;
@@ -432,8 +435,8 @@ test('a redirect loop is reported without leaking the session token', async (t) 
       redirectResponse('https://connexion.grdf.fr/login/token/redirect?stateToken=02.id.secret'),
   });
 
-  await assert.rejects(createClient().login(), (err) => {
-    assert.match(err.message, /redirecting/);
+  await assert.rejects(createClient({ loginRetryCount: 1 }).login(), (err) => {
+    assert.match(err.message, /redirects without ever landing/);
     assert.doesNotMatch(err.message, /stateToken/, 'the token must never reach the message');
     assert.doesNotMatch(err.message, /02\.id\.secret/);
     return true;
@@ -468,4 +471,88 @@ test('a login starts from an empty jar, never on the leftovers of a failed one',
   // session is what makes GRDF bounce between its login page and its redirect.
   assert.equal(calls[0].options.headers.Cookie, undefined);
   assert.equal(client.jar.get('auth_token'), 'the-token');
+});
+
+test('a login whose redirect chain will not converge is retried, then succeeds', async (t) => {
+  // The failure reported in production: the password is accepted, then the
+  // Okta round trip never lands on a page that sets the session. A fresh
+  // attempt usually clears it — without a retry, one hiccup costs a whole
+  // refresh cycle.
+  const calls = stubFetch(t, {
+    ...loginRoutes(),
+    // The first attempt never converges (it burns the whole hop budget);
+    // the second one goes straight through, as a retry usually does.
+    'https://connexion.grdf.fr/login/token/redirect': (_url, _options, index) =>
+      index <= MAX_REDIRECTS
+        ? redirectResponse('https://connexion.grdf.fr/login/token/redirect')
+        : redirectResponse('https://monespace.grdf.fr/accueil'),
+  });
+  const client = createClient();
+
+  await client.login();
+
+  assert.equal(client.isLoggedIn(), true);
+  assert.equal(logins(calls), 2, 'the whole flow was replayed');
+});
+
+test('the redirect-loop error names the last hop, not only the entry point', async (t) => {
+  stubFetch(t, {
+    ...loginRoutes(),
+    'https://connexion.grdf.fr/login/token/redirect': () =>
+      redirectResponse('https://connexion.grdf.fr/oauth2/authorize?state=02.id.secret'),
+    'https://connexion.grdf.fr/oauth2/authorize': () =>
+      redirectResponse('https://connexion.grdf.fr/login/token/redirect'),
+  });
+
+  await assert.rejects(createClient({ loginRetryCount: 1 }).login(), (err) => {
+    assert.match(err.message, /redirects without ever landing/);
+    assert.match(err.message, /last hop/);
+    assert.doesNotMatch(err.message, /02\.id\.secret/, 'no token leaks into the message');
+    return true;
+  });
+});
+
+test('a refused password is never retried: that is how accounts get locked', async (t) => {
+  const calls = stubFetch(
+    t,
+    loginRoutes({
+      'https://connexion.grdf.fr/idp/idx/challenge/answer': () =>
+        jsonResponse(
+          { messages: { value: [{ message: 'Mot de passe incorrect' }] } },
+          { status: 401 },
+        ),
+    }),
+  );
+
+  await assert.rejects(createClient().login(), GrdfAuthError);
+  assert.equal(logins(calls), 1, 'the credentials were presented exactly once');
+});
+
+test('an account asking for a second factor is not retried either', async (t) => {
+  const calls = stubFetch(
+    t,
+    loginRoutes({
+      'https://connexion.grdf.fr/idp/idx/challenge/answer': () =>
+        jsonResponse({ remediation: { value: [{ name: 'challenge-authenticator' }] } }),
+    }),
+  );
+
+  await assert.rejects(createClient().login(), GrdfAuthError);
+  assert.equal(logins(calls), 1);
+});
+
+test('a login that ends without a session cookie is retried', async (t) => {
+  const calls = stubFetch(t, {
+    ...loginRoutes(),
+    'https://monespace.grdf.fr/accueil': (_url, _options, index) =>
+      index === 0
+        ? htmlResponse('<html>no cookie</html>')
+        : htmlResponse('<html>ok</html>', { cookies: ['auth_token=the-token; Path=/'] }),
+  });
+  const client = createClient();
+
+  await client.login();
+
+  assert.equal(client.isLoggedIn(), true);
+  assert.equal(logins(calls), 2);
 });
