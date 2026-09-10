@@ -84,6 +84,14 @@ seconds, and at worst within a minute — or use **Refresh the data now**. A lon
 history takes a few minutes to appear in full: it is fed in gently (see above),
 oldest day first.
 
+**"No login token in the page GRDF served".** GRDF answered with something
+other than its sign-in form. The message says what came back — a captcha, a
+"too many attempts" page, a maintenance notice, or an unexpected page. The
+first three clear up on their own after a few hours; the last one probably
+means GRDF changed its website and the integration needs updating. Either way,
+try signing in on monespace.grdf.fr from a browser first: you will see the same
+page the integration saw.
+
 **"GRDF served its HTML app shell" or "the session was not accepted".** GRDF
 answered with a web page instead of data. Their site does that when it does not
 accept the session, and also when it is simply having a bad moment — it never

@@ -13,6 +13,7 @@ import {
   GrdfAuthError,
   GrdfClient,
   GrdfHttpError,
+  describeLoginPage,
   extractOktaErrorMessage,
   extractStateToken,
   redactUrl,
@@ -338,8 +339,10 @@ test('a session refused for good stops after a bounded number of logins', async 
     assert.match(err.message, /redirected/);
     return true;
   });
-  // The initial login plus MAX_RELOGIN_PER_REQUEST renewals, then plain waits.
-  assert.equal(logins(calls), 3);
+  // The initial login plus one renewal, then plain waits: renewing more often
+  // than that only aims more credential submissions at somebody else's
+  // authentication endpoint.
+  assert.equal(logins(calls), 2);
 });
 
 test('an expired session triggers a new login and the call is replayed', async (t) => {
@@ -555,4 +558,51 @@ test('a login that ends without a session cookie is retried', async (t) => {
 
   assert.equal(client.isLoggedIn(), true);
   assert.equal(logins(calls), 2);
+});
+
+test('a login page without its token is described, not guessed about', () => {
+  // "GRDF probably changed its login flow" was a guess covering four very
+  // different causes. The message now carries what was actually received.
+  const response = new Response('', {
+    status: 200,
+    headers: { 'content-type': 'text/html' },
+  });
+  const html =
+    '<html><head><title>Trop de tentatives</title></head><body>Veuillez réessayer plus tard</body></html>';
+
+  const description = describeLoginPage(response, html);
+
+  assert.match(description, /HTTP 200/);
+  assert.match(description, /bytes/);
+  assert.match(description, /title: "Trop de tentatives"/);
+  assert.match(description, /too many attempts/);
+});
+
+test('a captcha and a maintenance page are told apart', () => {
+  const response = new Response('', { status: 200, headers: { 'content-type': 'text/html' } });
+  assert.match(describeLoginPage(response, '<html>recaptcha here</html>'), /captcha/);
+  assert.match(describeLoginPage(response, '<html>site en maintenance</html>'), /maintenance/);
+});
+
+test('describeLoginPage survives a response it knows nothing about', () => {
+  assert.match(describeLoginPage(undefined, undefined), /HTTP \?/);
+  assert.match(describeLoginPage(null, ''), /0 bytes/);
+});
+
+test('the missing-token error carries the diagnosis and is not retried', async (t) => {
+  const calls = stubFetch(t, {
+    ...loginRoutes(),
+    // GRDF serves something that is not its login form.
+    'https://monespace.grdf.fr/': () =>
+      htmlResponse('<html><head><title>Service indisponible</title></head></html>'),
+  });
+
+  await assert.rejects(createClient().login(), (err) => {
+    assert.ok(err instanceof GrdfAuthError);
+    assert.match(err.message, /No login token/);
+    assert.match(err.message, /Service indisponible/);
+    return true;
+  });
+  // Not retried: hammering a login that serves no form helps nobody.
+  assert.equal(calls.filter((call) => call.url === 'https://monespace.grdf.fr/').length, 1);
 });

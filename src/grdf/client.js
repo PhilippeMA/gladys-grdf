@@ -52,8 +52,13 @@ const MAX_REDIRECTS = 20;
 /**
  * How many times a single request may renew the session before we accept that
  * a fresh login is not the answer and simply wait instead.
+ *
+ * One is enough now that the login retries internally: renewing twice here
+ * meant up to six credential submissions for a single API call, which is a
+ * lot to aim at somebody else's authentication endpoint — and a plausible way
+ * to get an account throttled.
  */
-const MAX_RELOGIN_PER_REQUEST = 2;
+const MAX_RELOGIN_PER_REQUEST = 1;
 
 /** Consumption datasets exposed by GRDF. */
 export const CONSUMPTION_TYPES = {
@@ -120,16 +125,64 @@ function decodeHtmlEscapes(value) {
 }
 
 /**
+ * Describe the page GRDF served instead of its login form.
+ *
+ * "GRDF probably changed its login flow" was a guess, and a bad one: the same
+ * symptom covers a page change, a captcha, a throttled account, and a
+ * maintenance notice. Whatever we say here is what the next bug report will be
+ * made of, so it says what was actually received rather than what we suppose.
+ *
+ * @param {Response} response the response the HTML came from
+ * @param {string} html
+ * @returns {string} a one-line description, safe to show and to log
+ */
+export function describeLoginPage(response, html) {
+  const body = typeof html === 'string' ? html : '';
+  const facts = [
+    `HTTP ${response?.status ?? '?'}`,
+    `${body.length} bytes`,
+    `type: ${response?.headers?.get?.('content-type') ?? 'unknown'}`,
+  ];
+  if (response?.url) {
+    facts.push(`landed on ${redactUrl(response.url)}`);
+  }
+
+  const title = /<title[^>]*>([^<]{1,120})<\/title>/i.exec(body);
+  if (title) {
+    facts.push(`title: "${title[1].trim()}"`);
+  }
+
+  // Markers worth naming, because each points at a different remedy.
+  const hints = [];
+  if (/captcha/i.test(body)) {
+    hints.push('the page mentions a captcha');
+  }
+  if (/trop de tentatives|too many (requests|attempts)|rate.?limit|verrouill|locked/i.test(body)) {
+    hints.push('the page mentions too many attempts or a locked account');
+  }
+  if (/maintenance|indisponible|momentan/i.test(body)) {
+    hints.push('the page mentions maintenance or a temporary outage');
+  }
+  if (/mot de passe|password|sign.?in|connexion/i.test(body)) {
+    hints.push('it does look like a sign-in page, but without the expected token');
+  }
+
+  return [facts.join(', '), ...hints].join(' — ');
+}
+
+/**
  * Extract the `stateToken` embedded in the login page.
  * Exported for the tests: this regex is the most fragile part of the flow.
  * @param {string} html
+ * @param {Response} [response] the response it came from, for the diagnosis
  * @returns {string}
  */
-export function extractStateToken(html) {
+export function extractStateToken(html, response) {
   const match = /"stateToken"\s*:\s*"([^"]+)"/.exec(html);
   if (!match) {
     throw new GrdfAuthError(
-      'Could not find the login state token in the GRDF page. GRDF probably changed its login flow.',
+      'No login token in the page GRDF served. Either GRDF changed its login flow, or it is not ' +
+        `serving us the real login page right now (${describeLoginPage(response, html)}).`,
     );
   }
   return decodeHtmlEscapes(match[1]);
@@ -210,12 +263,23 @@ export class GrdfClient {
   /**
    * @param {{ email: string, password: string, retryCount?: number, retryDelayMs?: number }} options
    */
-  constructor({ email, password, retryCount = 4, retryDelayMs = 2000, loginRetryCount = 3 }) {
+  constructor({
+    email,
+    password,
+    retryCount = 4,
+    retryDelayMs = 2000,
+    loginRetryCount = 3,
+    // Logins are spaced far more generously than API calls: replaying the
+    // whole Okta pipeline seconds after it failed looks like a brute force,
+    // and the failures we have seen need time to settle anyway.
+    loginRetryDelayMs = 10000,
+  }) {
     this.email = email;
     this.password = password;
     this.retryCount = retryCount;
     this.retryDelayMs = retryDelayMs;
     this.loginRetryCount = loginRetryCount;
+    this.loginRetryDelayMs = loginRetryDelayMs;
     this.jar = new CookieJar();
     this.loggedIn = false;
     /** In-flight login, so concurrent calls share one flow. @type {Promise<void>|undefined} */
@@ -275,7 +339,7 @@ export class GrdfClient {
         if (!err?.retryable || attempt >= this.loginRetryCount) {
           throw err;
         }
-        const delay = this.retryDelayMs * attempt;
+        const delay = this.loginRetryDelayMs * attempt;
         logger.warn(
           `Login attempt ${attempt}/${this.loginRetryCount} failed (${err.message}). ` +
             `Retrying in ${Math.round(delay / 1000)}s`,
@@ -305,7 +369,7 @@ export class GrdfClient {
         startResponse.status,
       );
     }
-    const stateToken = extractStateToken(await startResponse.text());
+    const stateToken = extractStateToken(await startResponse.text(), startResponse);
 
     // The login page sets this one from JavaScript; the pipeline expects it.
     this.jar.set('ln', this.email, { domain: 'grdf.fr' });

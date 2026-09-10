@@ -91,6 +91,15 @@ ajouté, l'historique est importé en quelques secondes, et au pire dans la minu
 quelques minutes à s'afficher entièrement : il est injecté en douceur (voir
 ci-dessus), du jour le plus ancien au plus récent.
 
+**« No login token in the page GRDF served ».** GRDF a servi autre chose que
+son formulaire de connexion. Le message précise ce qui a été reçu — un
+captcha, une page « trop de tentatives », une maintenance, ou une page
+inattendue. Les trois premiers cas se résolvent d'eux-mêmes en patientant
+quelques heures ; le dernier signifie probablement que GRDF a modifié son site
+et que l'intégration doit être adaptée. Dans tous les cas, essayez d'abord de
+vous connecter sur monespace.grdf.fr depuis un navigateur : vous verrez la même
+page que l'intégration.
+
 **« GRDF served its HTML app shell » ou « the session was not accepted ».** GRDF
 a répondu par une page web au lieu de données. Son site fait cela quand il
 n'accepte pas la session, mais aussi quand il traverse simplement un mauvais
