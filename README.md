@@ -19,8 +19,11 @@ four read-only sensors:
 | ------------------------------ | ------------------ | ---- |
 | Consommation quotidienne       | energy sensor      | kWh  |
 | Volume quotidien               | volume sensor      | m³   |
-| Index compteur                 | energy sensor      | m³   |
+| Index compteur                 | volume sensor      | m³   |
 | Température extérieure moyenne | temperature sensor | °C   |
+
+Gladys derives a fifth one itself, the **cost** of the daily consumption (see
+below), so the device carries it without the integration publishing it.
 
 Feature names are in French on purpose: GRDF is a French-only service and this
 is the vocabulary its users recognize. Code and comments stay in English.
@@ -74,7 +77,7 @@ beyond the Gladys SDK.
 │  ├─ devices/
 │  │  ├─ gasMeter.js                 #   one PCE -> one device + its features
 │  │  └─ index.js                    #   registry (devices are dynamic)
-│  ├─ gazpar.js                      # synchronization: readings -> states
+│  ├─ gazpar.js                      # synchronization: readings -> states + intervals
 │  ├─ publisher.js                   # paced publishing (host API rate limit)
 │  ├─ throttle.js                    # rate floor of the scheduled path
 │  ├─ store.js                       # sync cursor persisted in /data
@@ -85,6 +88,33 @@ beyond the Gladys SDK.
 ├─ gladys-assistant-integration.json # manifest (name, config schema, image…)
 └─ Dockerfile                        # Node 24 Alpine, read-only rootfs ready
 ```
+
+### Consumption and cost
+
+The daily consumption goes through `publishEnergyConsumption`, not through the
+states path. That API exists for exactly this case — a supplier whose readings
+arrive after the fact — and it is what makes a cost possible: Gladys stores the
+value as a dated _interval_, derives a `<external_id>_cost` feature at
+discovery, attaches it to the meter and prices it against the user's energy
+contract, recomputing the past when a price changes. A state carries an
+instant, not an interval, and nothing can price it.
+
+The integration therefore publishes no cost itself and no price configuration:
+the gas price belongs to the supplier, not to GRDF, and the user enters it in
+the Gladys energy screen. Until a contract is attached to this meter, Gladys
+files the consumption under the main electric meter — which would price gas at
+the electricity rate — so the user docs say to create one.
+
+The meter index is a **volume** sensor, not an `energy-sensor`/`index`. Gladys
+reads an energy index as a cumulative _energy_ reading: it derives a half-hourly
+consumption and a cost from its deltas and hangs them under the main electric
+meter. Ours counts cubic metres of gas, so that pipeline would bill m³ at the
+electricity price.
+
+No `energy_contracts` template is declared: the manifest field exists, but the
+tariff grammar of its `rules` mode is documented neither in the SDK nor in the
+community catalogue, and inventing a schema is how an integration breaks
+quietly. A flat French gas tariff would fit it well the day it is published.
 
 ### Scheduling and rate limits
 

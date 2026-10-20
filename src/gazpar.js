@@ -6,7 +6,8 @@
 //      configured history on the first run);
 //   2. fetch the daily readings, completing the missing temperatures;
 //   3. keep only the gas days newer than the cursor;
-//   4. publish them with their own timestamp, in batches;
+//   4. publish them: the consumption through the dated-consumption API (which
+//      is what lets Gladys price it), the other measurements as states;
 //   5. move the cursor forward and persist it.
 //
 // GRDF publishes a reading one to two days late, so there is nothing "live"
@@ -17,7 +18,13 @@
 import { createLogger } from '@gladysassistant/integration-sdk';
 import { findCreatedDevice, hasAnyValue } from './created.js';
 import { addDays, today as todayOf } from './dates.js';
-import { buildStates, deviceExternalId } from './devices/gasMeter.js';
+import {
+  FEATURE,
+  buildEnergyIntervals,
+  buildStates,
+  deviceExternalId,
+  externalIdsFor,
+} from './devices/gasMeter.js';
 import { normalizeReadings, withTemperatures } from './grdf/readings.js';
 import { StatePublisher } from './publisher.js';
 import { FIRST_IMPORT_INTERVAL_MS } from './throttle.js';
@@ -195,16 +202,30 @@ export async function synchronizePce(
   // import — otherwise every attempt would restart from the first day and a
   // history long enough to fail could never complete.
   const pacedPublisher = publisher ?? new StatePublisher();
+  const energyFeatureId = externalIdsFor(gladys, pce).feature(FEATURE.DAILY_ENERGY);
   let days = 0;
   let states = 0;
   let newLastDay = lastDay;
 
   for (const slice of chunk(readings, DAYS_PER_COMMIT)) {
+    // The consumption goes through the dated-consumption API, not through the
+    // states path: Gladys stores it as an interval, derives the cost feature
+    // of the meter from it and prices it against the user's energy contract.
+    // Publishing it as a state would store a number nothing can price.
+    const intervals = buildEnergyIntervals(slice);
+    if (intervals.length > 0) {
+      await gladys.publishEnergyConsumption(energyFeatureId, intervals);
+    }
+
+    // Everything else — volume, meter index, outside temperature — is a plain
+    // measurement, paced against the 300-states-per-minute limit.
     const sliceStates = buildStates(gladys, pce, slice);
-    await pacedPublisher.publish(gladys, sliceStates);
+    if (sliceStates.length > 0) {
+      await pacedPublisher.publish(gladys, sliceStates);
+    }
 
     days += slice.length;
-    states += sliceStates.length;
+    states += sliceStates.length + intervals.length;
     newLastDay = slice[slice.length - 1].day;
     store.set(pce, newLastDay);
     await store.save();

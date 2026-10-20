@@ -7,13 +7,16 @@
 #   1. computes the next semver from `package.json` (npm version rules);
 #   2. writes it into `package.json`, `package-lock.json` AND the manifest
 #      (`gladys-assistant-integration.json`: both `version` and the
-#      `docker_image` tag, so the indexer and the image stay in lockstep);
-#   3. commits the bump and pushes the `vX.Y.Z` tag;
-#   4. calls build.yml to publish the multi-arch image (`:X.Y.Z` + `:latest`).
+#      `docker_image` tag, so the indexer and the image stay in lockstep —
+#      with the sub-containers that run that same image);
+#   3. moves the `## [Unreleased]` section of `CHANGELOG.md` under the version;
+#   4. commits the bump and pushes the `vX.Y.Z` tag;
+#   5. calls build.yml to publish the multi-arch image (`:X.Y.Z` + `:latest`);
+#   6. calls github-release.yml to publish the GitHub Release of the tag.
 #
-# Why call build.yml instead of relying on the tag push: a tag pushed with the
-# default GITHUB_TOKEN does NOT trigger other workflows, so we invoke the build
-# ourselves. No personal access token to create.
+# Why call build.yml and github-release.yml instead of relying on the tag push:
+# a tag pushed with the default GITHUB_TOKEN does NOT trigger other workflows,
+# so we invoke them ourselves. No personal access token to create.
 # -----------------------------------------------------------------------------
 name: Release
 
@@ -39,21 +42,16 @@ jobs:
       version: ${{ steps.bump.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
 
-      # Needed to re-format the manifest after jq rewrites it (see below).
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Bump version and update the manifest
+      - name: Bump version, update the manifest and the changelog
         id: bump
         env:
           RELEASE_TYPE: ${{ inputs.release-type }}
@@ -69,18 +67,12 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}:${new_version}"
 
           # Keep the manifest in lockstep: the version the indexer reads AND the
-          # image tag Gladys pulls must both point at this release.
-          tmp="$(mktemp)"
-          jq --arg version "$new_version" --arg image "$image" \
-            '.version = $version | .docker_image = $image' \
-            gladys-assistant-integration.json > "$tmp"
-          mv "$tmp" gladys-assistant-integration.json
-
-          # jq re-prints the whole file in its own style (arrays exploded one
-          # item per line), which Prettier disagrees with — and the CI runs
-          # `format:check` on every push, so the release commit would land red.
-          # Hand the formatting back to the tool that owns it.
-          npx prettier --write gladys-assistant-integration.json
+          # image tag Gladys pulls must both point at this release. The script
+          # rewrites those two values in place (re-printing the file with jq
+          # would break the Prettier layout, and the CI format check with it),
+          # and moves the [Unreleased] changes of CHANGELOG.md under the version.
+          node .github/scripts/release.mjs prepare "$new_version" "$image" \
+            "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
 
           echo "version=${new_version}" >> "$GITHUB_OUTPUT"
 
@@ -97,6 +89,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add package.json package-lock.json gladys-assistant-integration.json
+          if [ -f CHANGELOG.md ]; then git add CHANGELOG.md; fi
           git commit -m "chore(release): ${VERSION}"
           git tag -a "v${VERSION}" -m "Release ${VERSION}"
 
@@ -112,3 +105,11 @@ jobs:
       packages: write
     with:
       version: ${{ needs.prepare.outputs.version }}
+
+  # Publish the GitHub Release of the new tag, once its image exists: the
+  # Gladys Supervision page links each version to the repository's releases.
+  github-release:
+    needs: build
+    uses: ./.github/workflows/github-release.yml
+    permissions:
+      contents: write

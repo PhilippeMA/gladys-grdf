@@ -5,6 +5,7 @@ import {
   FEATURE,
   buildDevice,
   buildDeviceName,
+  buildEnergyIntervals,
   buildStates,
 } from '../src/devices/gasMeter.js';
 import { buildDiscoveredDevices, filterPces, findPceByExternalId } from '../src/devices/index.js';
@@ -86,19 +87,39 @@ test('buildStates timestamps every value on its own gas day', () => {
     { day: '2026-08-01', energy: 44.5, volume: 4, endIndex: 12004, temperature: 18.4 },
   ]);
 
-  assert.equal(states.length, 4);
+  // Three states, not four: the energy is the meter's consumption and goes
+  // through the dated-consumption API instead, so Gladys can price it.
+  assert.equal(states.length, 3);
   for (const state of states) {
     assert.equal(state.created_at.toISOString(), '2026-08-01T12:00:00.000Z');
   }
   assert.deepEqual(
     states.map((state) => [state.device_feature_external_id, state.state]),
     [
-      [`${DEVICE_TYPE}:${PCE}:${FEATURE.DAILY_ENERGY}`, 44.5],
       [`${DEVICE_TYPE}:${PCE}:${FEATURE.DAILY_VOLUME}`, 4],
       [`${DEVICE_TYPE}:${PCE}:${FEATURE.INDEX}`, 12004],
       [`${DEVICE_TYPE}:${PCE}:${FEATURE.TEMPERATURE}`, 18.4],
     ],
   );
+});
+
+test('the daily energy becomes an interval dated by its gas day', () => {
+  const intervals = buildEnergyIntervals([
+    { day: '2026-08-01', energy: 44.5 },
+    { day: '2026-08-02', energy: 0 },
+  ]);
+
+  // The date, not an instant: Gladys resolves it to the local midnight of its
+  // own timezone and owns the interval from there.
+  assert.deepEqual(intervals, [
+    { date: '2026-08-01', kwh: 44.5 },
+    { date: '2026-08-02', kwh: 0 },
+  ]);
+});
+
+test('a day GRDF has no energy for produces no interval', () => {
+  assert.deepEqual(buildEnergyIntervals([{ day: '2026-08-01', volume: 4 }]), []);
+  assert.deepEqual(buildEnergyIntervals([{ day: '2026-08-01', energy: undefined }]), []);
 });
 
 test('buildStates never turns a missing measurement into a zero', () => {
@@ -112,10 +133,7 @@ test('buildStates never turns a missing measurement into a zero', () => {
       temperature: undefined,
     },
   ]);
-  assert.deepEqual(
-    states.map((state) => state.device_feature_external_id),
-    [`${DEVICE_TYPE}:${PCE}:${FEATURE.DAILY_ENERGY}`],
-  );
+  assert.deepEqual(states, [], 'nothing but the energy was known that day');
 });
 
 test('buildStates keeps a genuine zero (a day without gas is data too)', () => {
@@ -123,6 +141,6 @@ test('buildStates keeps a genuine zero (a day without gas is data too)', () => {
   const states = buildStates(gladys, PCE, [{ day: '2026-08-01', energy: 0, volume: 0 }]);
   assert.deepEqual(
     states.map((state) => state.state),
-    [0, 0],
+    [0],
   );
 });

@@ -101,10 +101,18 @@ export function buildDevice(gladys, pceEntry) {
         keep_history: true,
       },
       {
+        // A VOLUME sensor, not an energy index, although it is the meter's
+        // cumulative reading. Gladys treats `energy-sensor`/`index` as a
+        // cumulative ENERGY index: it derives a half-hourly consumption and
+        // its cost from the deltas, and hangs the whole thing under the main
+        // electric meter. Our index counts cubic metres of gas, so that
+        // pipeline would bill m³ at the electricity price. The energy of this
+        // meter has its own feature, in kWh, fed through the dated
+        // consumption API — see src/gazpar.js.
         name: 'Index compteur',
         external_id: ids.feature(FEATURE.INDEX),
-        category: DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR,
-        type: DEVICE_FEATURE_TYPES.ENERGY_SENSOR.INDEX,
+        category: DEVICE_FEATURE_CATEGORIES.VOLUME_SENSOR,
+        type: DEVICE_FEATURE_TYPES.VOLUME_SENSOR.DECIMAL,
         unit: DEVICE_FEATURE_UNITS.CUBIC_METER,
         min: 0,
         max: 99999999,
@@ -130,6 +138,12 @@ export function buildDevice(gladys, pceEntry) {
 
 /**
  * Turn clean readings into the batch payload of `publishStates`.
+ *
+ * The daily ENERGY is deliberately absent: it is the meter's consumption, and
+ * Gladys takes that one through its dated-consumption API instead (see
+ * `buildEnergyIntervals` and src/gazpar.js) so it can price it. Everything
+ * else is a plain measurement and goes through the states path.
+ *
  * A reading only produces the states it actually holds: a missing volume or a
  * missing temperature is skipped, never published as a zero.
  *
@@ -153,11 +167,27 @@ export function buildStates(gladys, pce, readings) {
       }
     };
 
-    push(FEATURE.DAILY_ENERGY, reading.energy);
     push(FEATURE.DAILY_VOLUME, reading.volume);
     push(FEATURE.INDEX, reading.endIndex);
     push(FEATURE.TEMPERATURE, reading.temperature);
   }
 
   return states;
+}
+
+/**
+ * Turn clean readings into the intervals of `publishEnergyConsumption`.
+ *
+ * One entry per gas day, in kWh, dated by the day itself: Gladys resolves it
+ * to the local midnight of its own timezone and owns the instant from there.
+ * We no longer choose the timestamp — which is the point, since the core
+ * needs the interval, not a state, to put a price on it.
+ *
+ * @param {ReturnType<import('../grdf/readings.js').normalizeReadings>} readings
+ * @returns {Array<{ date: string, kwh: number }>}
+ */
+export function buildEnergyIntervals(readings) {
+  return readings
+    .filter((reading) => typeof reading.energy === 'number' && reading.energy >= 0)
+    .map((reading) => ({ date: reading.day, kwh: reading.energy }));
 }

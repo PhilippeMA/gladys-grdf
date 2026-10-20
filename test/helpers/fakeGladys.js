@@ -15,10 +15,12 @@ export function createFakeGladys({ devices = null } = {}) {
   const batches = [];
   const discoveredDevices = [];
   const connectionStatuses = [];
+  const energyIntervals = [];
 
   return {
     published,
     batches,
+    energyIntervals,
     discoveredDevices,
     connectionStatuses,
 
@@ -43,6 +45,13 @@ export function createFakeGladys({ devices = null } = {}) {
           created_at: state.created_at,
         });
       }
+    },
+
+    // Dated consumption: a separate path from the states, so the core can
+    // turn it into an interval and price it (see src/gazpar.js).
+    async publishEnergyConsumption(featureExternalId, intervals) {
+      energyIntervals.push({ featureExternalId, intervals });
+      return { success: true, count: intervals.length, changed_from: null };
     },
 
     async publishDiscoveredDevices(discovered) {

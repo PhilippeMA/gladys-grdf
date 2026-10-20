@@ -60,6 +60,32 @@ dans Mon Espace, portant quatre capteurs en lecture seule :
 | Index compteur                 | m³    | Index du compteur à la fin de la journée gazière         |
 | Température extérieure moyenne | °C    | Température extérieure moyenne associée au jour par GRDF |
 
+Gladys ajoute lui-même un cinquième capteur, **le coût**, dérivé de la
+consommation quotidienne — voir ci-dessous.
+
+## Suivi du coût
+
+La consommation quotidienne n'est pas publiée comme une simple mesure : elle
+passe par le mécanisme de consommation datée de Gladys, celui prévu pour les
+fournisseurs dont les relevés arrivent après coup. Gladys en tire un capteur de
+coût rattaché au compteur et le calcule d'après votre contrat d'énergie.
+
+Pour obtenir des euros, il reste une chose à faire, une seule fois :
+
+1. ouvrez **Énergie** dans Gladys ;
+2. créez un contrat pour votre compteur Gazpar, avec votre prix du kWh et votre
+   abonnement.
+
+Deux points à connaître. D'abord, le prix du gaz vient de votre **fournisseur**
+(Engie, TotalEnergies…), pas de GRDF qui n'est que le distributeur : c'est à
+vous de le saisir, l'intégration ne peut pas le deviner. Ensuite, tant qu'aucun
+contrat n'est rattaché à ce compteur, Gladys le range sous votre compteur
+principal — en général l'électricité — et votre gaz serait alors valorisé au
+tarif de l'électricité. Le contrat dédié évite cela.
+
+Le coût de l'historique déjà importé est recalculé automatiquement dès que le
+contrat ou son prix change.
+
 Chaque valeur est enregistrée à la date du jour qu'elle concerne, et non à la
 date de son téléchargement : vos courbes restent justes malgré le retard de
 publication.
@@ -90,6 +116,13 @@ ajouté, l'historique est importé en quelques secondes, et au pire dans la minu
 — ou utilisez **Rafraîchir les données maintenant**. Un long historique met
 quelques minutes à s'afficher entièrement : il est injecté en douceur (voir
 ci-dessus), du jour le plus ancien au plus récent.
+
+**Mon compteur n'a pas de capteur de coût.** Gladys ne met pas à jour les
+capteurs d'un appareil déjà créé : un compteur ajouté avant la version qui a
+introduit le suivi du coût garde ses anciens capteurs. Supprimez l'appareil puis
+rajoutez-le depuis l'onglet **Découverte** pour obtenir la nouvelle définition —
+son historique sera réimporté sur la fenêtre configurée dans **Historique à
+importer**.
 
 **« No login token in the page GRDF served ».** GRDF a servi autre chose que
 son formulaire de connexion. Le message précise ce qui a été reçu — un

@@ -1,0 +1,26 @@
+# -----------------------------------------------------------------------------
+# Dependabot: update pull requests, checked by the CI like any other.
+#
+#   - npm, weekly: the Gladys SDK first of all (new device categories and
+#     features arrive through it); the development tools share one PR;
+#   - GitHub Actions, monthly.
+#
+# The Docker base image is left out on purpose: `node:24-alpine` is a moving
+# tag, pulled fresh by every release build (latest Node 24 and Alpine patches),
+# and moving to the next Node major is a deliberate change (Dockerfile, CI
+# matrix and `engines` together).
+# -----------------------------------------------------------------------------
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-dependencies:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

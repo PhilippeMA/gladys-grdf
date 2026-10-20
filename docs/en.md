@@ -59,6 +59,31 @@ carrying four read-only sensors:
 Every value is recorded with the date of the day it belongs to, not the date it
 was downloaded: your charts stay correct even though the data arrives late.
 
+Gladys adds a fifth sensor of its own, **the cost**, derived from the daily
+consumption — see below.
+
+## Cost tracking
+
+The daily consumption is not published as a plain measurement: it goes through
+the Gladys dated-consumption mechanism, the one meant for suppliers whose
+readings arrive after the fact. Gladys derives a cost sensor from it, attaches
+it to the meter, and computes it from your energy contract.
+
+To get euros, one thing is left to do, once:
+
+1. open **Energy** in Gladys;
+2. create a contract for your Gazpar meter, with your price per kWh and your
+   standing charge.
+
+Two things worth knowing. The gas price comes from your **supplier** (Engie,
+TotalEnergies…), not from GRDF, which only distributes it: you enter it
+yourself, the integration cannot know it. And until a contract is attached to
+this meter, Gladys files it under your main meter — usually electricity — which
+would price your gas at the electricity rate. A dedicated contract avoids that.
+
+The cost of the history already imported is recomputed automatically whenever
+the contract or its price changes.
+
 ## When the data arrives
 
 GRDF publishes a reading **one to two days late**, usually during the day
@@ -83,6 +108,12 @@ measurements for devices you added. Once added, the history is imported within
 seconds, and at worst within a minute — or use **Refresh the data now**. A long
 history takes a few minutes to appear in full: it is fed in gently (see above),
 oldest day first.
+
+**My meter has no cost sensor.** Gladys does not update the sensors of a device
+that is already created: a meter added before the version that introduced cost
+tracking keeps its old ones. Delete the device and add it back from the
+**Discovery** tab to get the new definition — its history is re-imported over
+the window set in **History to import**.
 
 **"No login token in the page GRDF served".** GRDF answered with something
 other than its sign-in form. The message says what came back — a captcha, a
