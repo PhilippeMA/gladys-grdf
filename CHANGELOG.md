@@ -5,6 +5,8 @@ workflow moves the `[Unreleased]` section under the released version.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-20
+
 ### Added
 
 - Energy cost tracking. The daily consumption is now published through the
@@ -43,3 +45,6 @@ over the window configured in **History to import**.
   new volume the owner of the image's directory, so `/data` was root-owned and
   the integration could not write its synchronization cursor: it fell back to
   memory and re-imported the history window on every restart.
+
+[Unreleased]: https://github.com/PhilippeMA/gladys-grdf/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/PhilippeMA/gladys-grdf/releases/tag/v1.2.0
