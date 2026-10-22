@@ -5,6 +5,8 @@ workflow moves the `[Unreleased]` section under the released version.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-22
+
 ### Fixed
 
 - A GRDF that cannot be reached is now reported as such — "GRDF refused the
@@ -54,5 +56,6 @@ over the window configured in **History to import**.
   the integration could not write its synchronization cursor: it fell back to
   memory and re-imported the history window on every restart.
 
-[Unreleased]: https://github.com/PhilippeMA/gladys-grdf/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/PhilippeMA/gladys-grdf/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/PhilippeMA/gladys-grdf/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/PhilippeMA/gladys-grdf/releases/tag/v1.2.0

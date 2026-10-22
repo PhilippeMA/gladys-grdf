@@ -1,6 +1,6 @@
 {
   "name": "gladys-grdf-gazpar",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Gladys Assistant external integration reading the gas consumption of a GRDF Gazpar meter.",
   "type": "module",
