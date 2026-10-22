@@ -124,6 +124,21 @@ rajoutez-le depuis l'onglet **Découverte** pour obtenir la nouvelle définition
 son historique sera réimporté sur la fenêtre configurée dans **Historique à
 importer**.
 
+**« Could not reach GRDF » / « Impossible de joindre GRDF ».** La requête n'est
+jamais arrivée : rien n'a été refusé, la connexion elle-même a échoué. Ce n'est
+donc pas un problème de mot de passe. Les causes habituelles, dans l'ordre où
+les vérifier : GRDF est indisponible (testez monespace.grdf.fr depuis un
+navigateur), votre serveur Gladys a perdu son accès à Internet, ou sa
+résolution DNS est en panne. Depuis la machine qui héberge Gladys :
+
+```
+curl -sS -o /dev/null -w '%{http_code}\n' https://monespace.grdf.fr
+```
+
+L'intégration réessaie quelques fois dans la même passe, puis abandonne et
+retente au rafraîchissement suivant : une panne de quelques heures se résorbe
+toute seule, l'historique manquant est rattrapé au premier passage qui aboutit.
+
 **« No login token in the page GRDF served ».** GRDF a servi autre chose que
 son formulaire de connexion. Le message précise ce qui a été reçu — un
 captcha, une page « trop de tentatives », une maintenance, ou une page

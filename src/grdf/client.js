@@ -259,6 +259,77 @@ export async function describeSessionRejection(response, where) {
   };
 }
 
+/**
+ * GRDF could not be reached at all: the connection was refused, timed out, or
+ * the name did not resolve. Nothing was refused and nothing was served — the
+ * request never got there, which is a different problem from a session GRDF
+ * rejects, and usually not ours to fix.
+ */
+export class GrdfNetworkError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'GrdfNetworkError';
+    this.cause = cause;
+    this.retryable = true;
+  }
+}
+
+/**
+ * Turn a thrown `fetch` failure into something a human can act on.
+ *
+ * `TypeError: fetch failed` says nothing: the useful part is in `cause`, and
+ * each code points at a different culprit — the machine's network, DNS, or
+ * GRDF itself.
+ *
+ * @param {unknown} err the error `fetch` threw
+ * @param {string} url the URL being fetched
+ * @returns {GrdfNetworkError|undefined} undefined when it is not a network failure
+ */
+export function describeNetworkFailure(err, url) {
+  const code = err?.cause?.code ?? err?.code;
+  const host = (() => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return 'GRDF';
+    }
+  })();
+
+  const reasons = {
+    ECONNREFUSED: `${host} refused the connection`,
+    ECONNRESET: `${host} closed the connection`,
+    ENOTFOUND: `${host} could not be resolved (DNS)`,
+    EAI_AGAIN: `${host} could not be resolved (DNS temporarily unavailable)`,
+    ETIMEDOUT: `${host} did not answer in time`,
+    EHOSTUNREACH: `no route to ${host} from this machine`,
+    ENETUNREACH: `the network is unreachable from this machine`,
+    UND_ERR_CONNECT_TIMEOUT: `${host} did not accept the connection in time`,
+    UND_ERR_HEADERS_TIMEOUT: `${host} accepted the connection but sent no answer`,
+    UND_ERR_SOCKET: `the connection to ${host} broke`,
+  };
+
+  if (reasons[code]) {
+    return new GrdfNetworkError(
+      `Could not reach GRDF: ${reasons[code]} (${code}). ` +
+        'This is a connection problem between this machine and GRDF, not a refused login.',
+      err,
+    );
+  }
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+    return new GrdfNetworkError(`Could not reach GRDF: ${host} took too long to answer.`, err);
+  }
+  // A TypeError from fetch with no recognizable cause is still a transport
+  // failure: undici wraps everything that went wrong before a response.
+  if (err instanceof TypeError) {
+    return new GrdfNetworkError(
+      `Could not reach GRDF: the request to ${host} failed before any answer` +
+        `${code ? ` (${code})` : ''}.`,
+      err,
+    );
+  }
+  return undefined;
+}
+
 export class GrdfClient {
   /**
    * @param {{ email: string, password: string, retryCount?: number, retryDelayMs?: number }} options
@@ -479,10 +550,27 @@ export class GrdfClient {
     let reloginCount = 0;
 
     for (let attempt = 1; attempt <= this.retryCount; attempt += 1) {
-      const response = await this.#fetch(url, {
-        headers: { Accept: 'application/json', domain: 'grdf.fr' },
-        followRedirects: false,
-      });
+      let response;
+      try {
+        response = await this.#fetch(url, {
+          headers: { Accept: 'application/json', domain: 'grdf.fr' },
+          followRedirects: false,
+        });
+      } catch (err) {
+        // GRDF unreachable: nothing was refused, the request never arrived.
+        // Worth a couple of tries — an outage then fails the pass, which is
+        // the honest outcome, and the next scheduled one tries again.
+        if (!(err instanceof GrdfNetworkError) || attempt === this.retryCount) {
+          throw err;
+        }
+        lastError = err;
+        const delay = this.retryDelayMs * attempt;
+        logger.warn(
+          `${err.message} Retrying in ${Math.round(delay / 1000)}s (attempt ${attempt}/${this.retryCount})`,
+        );
+        await sleep(delay);
+        continue;
+      }
 
       const rejection = await describeSessionRejection(response, where);
 
@@ -615,16 +703,28 @@ export class GrdfClient {
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       const cookieHeader = this.jar.header(currentUrl);
-      const response = await fetch(currentUrl, {
-        ...currentOptions,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        headers: {
-          'User-Agent': USER_AGENT,
-          ...(currentOptions.headers ?? {}),
-          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-        },
-      });
+      let response;
+      try {
+        response = await fetch(currentUrl, {
+          ...currentOptions,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          headers: {
+            'User-Agent': USER_AGENT,
+            ...(currentOptions.headers ?? {}),
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          },
+        });
+      } catch (err) {
+        // `TypeError: fetch failed` on its own tells the user nothing, and it
+        // used to travel all the way up: say what actually failed, and mark it
+        // retryable so a blip does not cost a whole refresh cycle.
+        const networkError = describeNetworkFailure(err, currentUrl);
+        if (networkError) {
+          throw networkError;
+        }
+        throw err;
+      }
 
       this.jar.storeFromResponse(currentUrl, response);
 

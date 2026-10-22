@@ -5,6 +5,14 @@ workflow moves the `[Unreleased]` section under the released version.
 
 ## [Unreleased]
 
+### Fixed
+
+- A GRDF that cannot be reached is now reported as such — "GRDF refused the
+  connection (ECONNREFUSED)", "did not accept the connection in time", "could
+  not be resolved (DNS)" — instead of a bare `TypeError: fetch failed`, and
+  retried within the pass. A connection problem is not a refused login, and the
+  message now says so rather than sending the user to check their password.
+
 ## [1.2.0] - 2026-10-20
 
 ### Added

@@ -13,7 +13,9 @@ import {
   GrdfAuthError,
   GrdfClient,
   GrdfHttpError,
+  GrdfNetworkError,
   describeLoginPage,
+  describeNetworkFailure,
   extractOktaErrorMessage,
   extractStateToken,
   redactUrl,
@@ -605,4 +607,83 @@ test('the missing-token error carries the diagnosis and is not retried', async (
   });
   // Not retried: hammering a login that serves no form helps nobody.
   assert.equal(calls.filter((call) => call.url === 'https://monespace.grdf.fr/').length, 1);
+});
+
+/** What undici throws when the connection never reaches the server. */
+function networkError(code) {
+  const err = new TypeError('fetch failed');
+  err.cause = Object.assign(new Error(code), { code });
+  return err;
+}
+
+test('a refused or unreachable GRDF is named, not left as "fetch failed"', () => {
+  const url = 'https://monespace.grdf.fr/api/e-conso/pce';
+  const refused = describeNetworkFailure(networkError('ECONNREFUSED'), url);
+  assert.ok(refused instanceof GrdfNetworkError);
+  assert.match(refused.message, /monespace\.grdf\.fr refused the connection/);
+  assert.match(refused.message, /ECONNREFUSED/);
+  assert.match(refused.message, /not a refused login/);
+
+  assert.match(
+    describeNetworkFailure(networkError('UND_ERR_CONNECT_TIMEOUT'), url).message,
+    /did not accept the connection in time/,
+  );
+  assert.match(describeNetworkFailure(networkError('ENOTFOUND'), url).message, /DNS/);
+  assert.match(
+    describeNetworkFailure(networkError('ENETUNREACH'), url).message,
+    /network is unreachable/,
+  );
+});
+
+test('an unrecognized transport failure is still reported as one, and retryable', () => {
+  const err = describeNetworkFailure(new TypeError('fetch failed'), 'https://monespace.grdf.fr/');
+  assert.ok(err instanceof GrdfNetworkError);
+  assert.equal(err.retryable, true);
+  assert.match(err.message, /failed before any answer/);
+});
+
+test('an error that is not a transport failure is left alone', () => {
+  assert.equal(describeNetworkFailure(new Error('boom'), 'https://monespace.grdf.fr/'), undefined);
+  assert.equal(describeNetworkFailure(undefined, 'https://monespace.grdf.fr/'), undefined);
+});
+
+test('an API call rides out a connection blip instead of losing the pass', async (t) => {
+  let calls = 0;
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  const routes = loginRoutes();
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.startsWith('https://monespace.grdf.fr/api/e-conso')) {
+      calls += 1;
+      if (calls === 1) {
+        throw networkError('ECONNREFUSED');
+      }
+      return jsonResponse([{ pce: '012' }]);
+    }
+    const [, handler] = Object.entries(routes).find(([pattern]) => url.startsWith(pattern));
+    return handler(url, options, 0);
+  };
+
+  const pces = await createClient().getPceList();
+
+  assert.deepEqual(pces, [{ pce: '012' }]);
+  assert.equal(calls, 2, 'the call was replayed after the blip');
+});
+
+test('a GRDF that stays unreachable fails the pass with the reason', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async () => {
+    throw networkError('ECONNREFUSED');
+  };
+
+  await assert.rejects(createClient({ retryCount: 2, loginRetryCount: 1 }).getPceList(), (err) => {
+    assert.ok(err instanceof GrdfNetworkError);
+    assert.match(err.message, /refused the connection/);
+    return true;
+  });
 });

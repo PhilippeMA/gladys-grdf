@@ -18,7 +18,7 @@ import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { isConfigured, normalizeConfig } from './src/config.js';
 import { buildDiscoveredDevices, filterPces, findPceByExternalId } from './src/devices/index.js';
 import { synchronizeAll, synchronizePce } from './src/gazpar.js';
-import { GrdfAuthError, GrdfClient } from './src/grdf/client.js';
+import { GrdfAuthError, GrdfClient, GrdfNetworkError } from './src/grdf/client.js';
 import { StatePublisher } from './src/publisher.js';
 import { SyncStore } from './src/store.js';
 import { Throttle } from './src/throttle.js';
@@ -246,6 +246,15 @@ async function initialize({ force = false } = {}) {
 
 /** Turn an error into the message shown under the connection status. */
 function connectionStatusMessage(err) {
+  if (err instanceof GrdfNetworkError) {
+    // Not a GRDF refusal: the request never arrived. Saying so sends the user
+    // looking at their network — or at nothing at all, if GRDF is down — and
+    // not at their password.
+    return {
+      en: `${err.message} GRDF may be down, or this machine may have lost its way out.`,
+      fr: `${err.message} GRDF est peut-être indisponible, ou cette machine n’a plus d’accès à Internet.`,
+    };
+  }
   if (err instanceof GrdfAuthError) {
     return {
       en: `GRDF login failed: ${err.message}`,

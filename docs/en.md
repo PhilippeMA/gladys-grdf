@@ -115,6 +115,20 @@ tracking keeps its old ones. Delete the device and add it back from the
 **Discovery** tab to get the new definition — its history is re-imported over
 the window set in **History to import**.
 
+**"Could not reach GRDF".** The request never arrived: nothing was refused, the
+connection itself failed. So this is not a password problem. The usual causes,
+in the order worth checking: GRDF is down (try monespace.grdf.fr in a browser),
+your Gladys server lost its way to the Internet, or its DNS resolution is
+broken. From the machine hosting Gladys:
+
+```
+curl -sS -o /dev/null -w '%{http_code}\n' https://monespace.grdf.fr
+```
+
+The integration retries a few times within the same pass, then gives up and
+tries again at the next refresh: an outage of a few hours clears on its own,
+and the missing days are caught up by the first pass that gets through.
+
 **"No login token in the page GRDF served".** GRDF answered with something
 other than its sign-in form. The message says what came back — a captcha, a
 "too many attempts" page, a maintenance notice, or an unexpected page. The
