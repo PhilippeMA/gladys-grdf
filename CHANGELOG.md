@@ -5,6 +5,12 @@ workflow moves the `[Unreleased]` section under the released version.
 
 ## [Unreleased]
 
+### Changed
+
+- Declared for France only (`countries: ["FR"]`): the Gladys catalog of an
+  instance located elsewhere no longer lists it in its browse views (the
+  search still finds it). Requires Gladys 5.3.0 or later.
+
 ## [1.2.1] - 2026-10-22
 
 ### Fixed
